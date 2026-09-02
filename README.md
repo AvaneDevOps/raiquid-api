@@ -159,9 +159,11 @@ opaque confirm token.
 ## Git hooks
 
 This repo uses [Husky](https://typicode.github.io/husky/) to run checks
-automatically around `git commit`. Husky works by pointing git's `core.hooksPath`
-at the `.husky/` directory (done by the `prepare` script, which runs on
-`npm install`), so the scripts in `.husky/` become git's hooks.
+automatically around `git commit`. On `npm install`, the `prepare` script runs
+`husky`, which sets git's `core.hooksPath` to `.husky/_`. That directory holds
+tiny generated wrappers (one per hook name) that each invoke the matching
+hand-written script at `.husky/<hook>`. Net effect: the scripts below run as
+git hooks, and nothing is installed outside the repo.
 
 | Hook                 | Runs                                | Why                                                                 |
 | -------------------- | ----------------------------------- | ------------------------------------------------------------------- |
@@ -178,7 +180,7 @@ genuine-emergency escape hatch only — CI (`.github/workflows/ci.yml`) re-runs
 lint, build, test, and commitlint independently, so a bypassed commit still has
 to pass there before it can merge.
 
-To disable Husky entirely for a shell session: `export HUSKY=0`. To undo Husky's
-setup completely: `git config --unset core.hooksPath` (this is the exact
-mechanism Husky uses — nothing more magical than repointing where git looks for
-hook scripts).
+To disable Husky for a shell session: `export HUSKY=0` (the wrappers in
+`.husky/_` check this and exit early). To undo Husky's setup completely:
+`git config --unset core.hooksPath` — that's the entire mechanism, just
+repointing where git looks for hook scripts.
