@@ -175,7 +175,7 @@ model Invoice {
   buyer                  Buyer         @relation(fields: [buyerId], references: [id])
   description            String?
   amount                 Decimal       @db.Decimal(18, 2)
-  currency               String        @default("USD")
+  currency               String        @default("NGN")
   issueDate              DateTime      @default(now())
   dueDate                DateTime
   status                 InvoiceStatus @default(submitted)
@@ -224,7 +224,7 @@ model WalletTransaction {
   id          String               @id @default(cuid())
   type        WalletTransactionType
   amount      Decimal              @db.Decimal(18, 2)
-  currency    String               @default("USD")
+  currency    String               @default("NGN")
   description String?
   // Owner side: exactly one of these is set.
   businessId  String?

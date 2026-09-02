@@ -26,7 +26,7 @@ export class CreateInvoiceDto {
   @IsPositive()
   amount!: number;
 
-  @ApiPropertyOptional({ example: 'USD', default: 'USD' })
+  @ApiPropertyOptional({ example: 'NGN', default: 'NGN' })
   @IsOptional()
   @IsString()
   @MaxLength(3)
