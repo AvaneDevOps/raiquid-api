@@ -1,0 +1,7 @@
+# pre-commit — runs automatically when you `git commit`, before the commit is
+# created. We use it to lint + format only the files you actually staged, so
+# broken or unformatted code never enters a commit. `lint-staged` (configured
+# in package.json) runs `eslint --fix` then `prettier --write` on staged *.ts
+# files and re-stages them. If eslint finds an error it cannot auto-fix, it
+# exits non-zero and the commit is aborted.
+npx lint-staged

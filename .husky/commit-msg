@@ -1,0 +1,7 @@
+# commit-msg — runs automatically after you write a commit message, with the
+# path to the temp file holding that message as $1. We pipe it through
+# commitlint, which checks the message against commitlint.config.js
+# (Conventional Commits + our restricted scope list). A non-conforming message
+# like "asdf" is rejected and the commit is aborted; "feat(investor): ..." passes.
+# This keeps `git log` machine-readable for changelogs and release tooling.
+npx --no -- commitlint --edit "$1"

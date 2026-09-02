@@ -1,0 +1,293 @@
+// Raiquid data contract.
+//
+// This schema is the shared domain model between this API and the Raiquid
+// frontend. The enum values below are used verbatim by both apps, so do not
+// rename them without coordinating the change on both sides.
+//
+// NOTE: on-chain interaction (minting / whitelisting / transfers / burns on
+// Base Sepolia via Brickken) is handled by a separate service. `OnChainEvent`
+// is a read/mirror table only: rows are written by that other service and this
+// API just reads them for the admin ledger UI.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+// Prisma 7: the connection URL lives in prisma.config.ts, not here.
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums (shared with the frontend domain model)
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  business
+  buyer
+  investor
+  admin
+}
+
+enum ProvenanceTier {
+  quarried
+  carried
+  anchored
+}
+
+enum InvoiceStatus {
+  submitted
+  awaiting_acceptance
+  tokenized
+  funding
+  funded
+  repaid
+  overdue
+}
+
+enum WhitelistStatus {
+  identity_submitted
+  in_review
+  whitelisted
+}
+
+enum WalletTransactionType {
+  deposit
+  withdrawal
+  invested
+  repayment
+}
+
+enum OnChainAction {
+  mint
+  whitelist
+  transfer
+  burn
+}
+
+enum OnChainStatus {
+  confirmed
+  pending
+  failed
+}
+
+enum NotificationTone {
+  positive
+  informational
+  warning
+}
+
+// ---------------------------------------------------------------------------
+// Core identity
+// ---------------------------------------------------------------------------
+
+/// A person who can sign in. Mirrors a Clerk user via `clerkUserId`; profile
+/// data (name/email) is synced from Clerk. Exactly one of the role-specific
+/// profiles below is expected to exist per user, matching `role`.
+model User {
+  id           String   @id @default(cuid())
+  clerkUserId  String   @unique
+  email        String   @unique
+  firstName    String?
+  lastName     String?
+  role         UserRole
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  business      Business?
+  buyer         Buyer?
+  investor      Investor?
+  notifications Notification[]
+
+  @@index([role])
+}
+
+/// A supplier that submits invoices for financing. Backs the /business/* area.
+model Business {
+  id                 String   @id @default(cuid())
+  userId             String   @unique
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  legalName          String
+  registrationNumber String?
+  countryOfIncorporation String?
+  // Settings surface (GET/PATCH /business/settings)
+  contactEmail       String?
+  contactPhone       String?
+  payoutWalletAddress String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  invoices            Invoice[]
+  walletTransactions  WalletTransaction[]
+}
+
+/// The debtor named on an invoice. Buyers act through the standalone magic-link
+/// confirm flow and may not have a Clerk account, so `userId` is optional.
+/// The rate/count fields power the buyer reputation panel shown to businesses
+/// and investors.
+model Buyer {
+  id                     String         @id @default(cuid())
+  userId                 String?        @unique
+  user                   User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  legalName              String
+  contactEmail           String
+  contactPhone           String?
+  provenanceTier         ProvenanceTier @default(quarried)
+  // Reputation metrics (0..1 rates), maintained by later business logic.
+  acceptanceRate         Decimal        @default(0) @db.Decimal(5, 4)
+  onTimePaymentRate      Decimal        @default(0) @db.Decimal(5, 4)
+  invoicesFinancedCount  Int            @default(0)
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+
+  invoices Invoice[]
+}
+
+/// A funder that buys stakes in tokenized invoices. Backs the /investor/* area.
+model Investor {
+  id                 String          @id @default(cuid())
+  userId             String          @unique
+  user               User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName        String?
+  countryOfResidence String?
+  whitelistStatus    WhitelistStatus @default(identity_submitted)
+  investingWalletAddress String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  holdings           Holding[]
+  walletTransactions WalletTransaction[]
+}
+
+// ---------------------------------------------------------------------------
+// Invoices & financing
+// ---------------------------------------------------------------------------
+
+/// An invoice submitted by a Business, owed by a Buyer, that progresses through
+/// tokenization and funding. Central entity for every dashboard.
+model Invoice {
+  id                     String        @id @default(cuid())
+  invoiceNumber          String
+  businessId             String
+  business               Business      @relation(fields: [businessId], references: [id])
+  buyerId                String
+  buyer                  Buyer         @relation(fields: [buyerId], references: [id])
+  description            String?
+  amount                 Decimal       @db.Decimal(18, 2)
+  currency               String        @default("USD")
+  issueDate              DateTime      @default(now())
+  dueDate                DateTime
+  status                 InvoiceStatus @default(submitted)
+  // Economics, expressed as percentages (e.g. 2.5 == 2.5%).
+  platformFeePct         Decimal       @default(0) @db.Decimal(5, 2)
+  reserveContributionPct Decimal       @default(0) @db.Decimal(5, 2)
+  fundedAmount           Decimal       @default(0) @db.Decimal(18, 2)
+  // Magic-link confirm flow (public GET /confirm/:invoiceId).
+  confirmToken           String?       @unique
+  confirmedAt            DateTime?
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+
+  holdings           Holding[]
+  walletTransactions WalletTransaction[]
+  onChainEvents      OnChainEvent[]
+
+  @@unique([businessId, invoiceNumber])
+  @@index([status])
+  @@index([dueDate])
+}
+
+/// An investor's stake in a single invoice.
+model Holding {
+  id          String   @id @default(cuid())
+  investorId  String
+  investor    Investor @relation(fields: [investorId], references: [id])
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id])
+  // Amount invested and the token units received on-chain.
+  amount      Decimal  @db.Decimal(18, 2)
+  tokenUnits  Decimal  @default(0) @db.Decimal(18, 8)
+  acquiredAt  DateTime @default(now())
+  // Realized return once the invoice is repaid.
+  repaidAmount Decimal @default(0) @db.Decimal(18, 2)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([investorId, invoiceId])
+  @@index([invoiceId])
+}
+
+/// A ledger entry against a business or investor wallet. Powers GET
+/// /business/wallet and GET /investor/wallet.
+model WalletTransaction {
+  id          String               @id @default(cuid())
+  type        WalletTransactionType
+  amount      Decimal              @db.Decimal(18, 2)
+  currency    String               @default("USD")
+  description String?
+  // Owner side: exactly one of these is set.
+  businessId  String?
+  business    Business?            @relation(fields: [businessId], references: [id])
+  investorId  String?
+  investor    Investor?            @relation(fields: [investorId], references: [id])
+  // Optional link to the invoice that triggered the movement.
+  invoiceId   String?
+  invoice     Invoice?             @relation(fields: [invoiceId], references: [id])
+  createdAt   DateTime             @default(now())
+
+  @@index([businessId])
+  @@index([investorId])
+}
+
+// ---------------------------------------------------------------------------
+// On-chain mirror (read-only in this API — see file header)
+// ---------------------------------------------------------------------------
+
+/// Mirror of an on-chain action performed by the separate web3 service.
+/// Rows here are never written by business logic in this API; they are
+/// ingested from chain events and surfaced in GET /admin/ledger.
+model OnChainEvent {
+  id            String        @id @default(cuid())
+  action        OnChainAction
+  status        OnChainStatus @default(pending)
+  txHash        String?       @unique
+  blockNumber   BigInt?
+  chainId       Int           @default(84532) // Base Sepolia
+  // Loose links; on-chain identifiers may arrive before the off-chain row.
+  invoiceId     String?
+  invoice       Invoice?      @relation(fields: [invoiceId], references: [id])
+  tokenAddress  String?
+  walletAddress String?
+  fromAddress   String?
+  toAddress     String?
+  amount        Decimal?      @db.Decimal(18, 8)
+  rawPayload    Json?
+  occurredAt    DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([action])
+  @@index([status])
+  @@index([invoiceId])
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+/// In-app notification shown in the notifications tray (GET /notifications).
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tone      NotificationTone @default(informational)
+  title     String
+  body      String
+  // Optional in-app deep link (frontend route).
+  href      String?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId, readAt])
+}

@@ -1,0 +1,70 @@
+name: CI
+
+# The real quality gate. Husky runs lint/commit checks locally as a
+# convenience, but they can be bypassed (git commit --no-verify), so CI
+# re-runs everything independently on every push and PR.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      # Prisma 7 needs a connection string present to load prisma.config.ts.
+      # `prisma generate` / `prisma validate` / `nest build` never open a
+      # connection, so a placeholder is enough here. Nothing in this job
+      # touches a real database.
+      DATABASE_URL: postgresql://raiquid:raiquid@localhost:5432/raiquid?schema=public
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: Lint
+        run: npm run lint:ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+  commitlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # Lint every commit message on the PR (or the pushed range).
+      - name: Lint commit messages
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            npx commitlint --from "${{ github.event.pull_request.base.sha }}" --to "${{ github.sha }}" --verbose
+          else
+            npx commitlint --last --verbose
+          fi

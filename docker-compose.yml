@@ -1,0 +1,23 @@
+# Local-dev infrastructure. Just Postgres for now — background jobs are
+# deferred, so there is no Redis or worker service yet.
+services:
+  postgres:
+    image: postgres:17
+    container_name: raiquid-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: raiquid
+      POSTGRES_PASSWORD: raiquid
+      POSTGRES_DB: raiquid
+    ports:
+      - '5432:5432'
+    volumes:
+      - raiquid-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U raiquid -d raiquid']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  raiquid-pg-data:
