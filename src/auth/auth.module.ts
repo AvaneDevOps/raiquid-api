@@ -18,8 +18,14 @@ import { RolesGuard } from './roles.guard';
 @Module({
   providers: [
     ClerkClientProvider,
-    { provide: APP_GUARD, useClass: ClerkAuthGuard },
-    { provide: APP_GUARD, useClass: RolesGuard },
+    // Registered as their own providers (not just inline `useClass` on the
+    // APP_GUARD entries) so `overrideProvider(ClerkAuthGuard)` works in e2e
+    // tests — Nest gives `useClass`-only APP_GUARD entries a synthetic token
+    // that isn't reachable by the guard's own class.
+    ClerkAuthGuard,
+    RolesGuard,
+    { provide: APP_GUARD, useExisting: ClerkAuthGuard },
+    { provide: APP_GUARD, useExisting: RolesGuard },
   ],
   exports: [ClerkClientProvider],
 })
