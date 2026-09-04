@@ -6,6 +6,8 @@ const base = {
   DATABASE_URL: 'postgresql://u:p@localhost:5432/db?schema=public',
   CLERK_SECRET_KEY: 'sk_test_x',
   CLERK_PUBLISHABLE_KEY: 'pk_test_x',
+  CLERK_WEBHOOK_SECRET: 'whsec_x',
+  FRONTEND_URL: 'http://localhost:3000',
   R2_ACCOUNT_ID: 'acc',
   R2_ACCESS_KEY_ID: 'key',
   R2_SECRET_ACCESS_KEY: 'secret',

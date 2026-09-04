@@ -62,9 +62,20 @@ npm run start:dev
 | `npm run build`           | Compile to `dist/`                        |
 | `npm run lint`            | ESLint (`--fix`)                          |
 | `npm test`                | Jest unit tests                           |
+| `npm run test:e2e`        | Jest e2e tests against a real Postgres (see below) |
 | `npm run prisma:migrate`  | `prisma migrate dev`                      |
 | `npm run prisma:studio`   | Prisma Studio                             |
 | `npm run db:up` / `db:down` | Start/stop the Postgres container       |
+
+### e2e tests
+
+`npm run test:e2e` boots the real `AppModule` against a real Postgres — point
+`DATABASE_URL` at a migrated database (the default in `test/setup-env.ts` is a
+throwaway container on `localhost:5544`, override it via env if you use a
+different one). It overrides `ClerkAuthGuard` and `EmailService` so no real
+Clerk session or Resend call is needed. The script runs Jest under
+`--experimental-vm-modules`: Prisma 7's driver-adapter query compiler loads
+itself via a dynamic `import()`, which Jest only supports with that flag.
 
 ## Environment variables
 
@@ -73,8 +84,8 @@ the process exits if any is missing or malformed. See
 [`.env.example`](.env.example).
 
 `NODE_ENV`, `PORT`, `DATABASE_URL`, `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY`,
-`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`,
-`RESEND_API_KEY`.
+`CLERK_WEBHOOK_SECRET`, `FRONTEND_URL`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
+`R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `RESEND_API_KEY`.
 
 > Prisma 7 note: `DATABASE_URL` is **not** read from `schema.prisma` anymore.
 > It lives in [`prisma.config.ts`](prisma.config.ts) for the CLI, and the app
@@ -98,6 +109,7 @@ enforced globally by `ClerkAuthGuard`, **except** routes marked _public_ below.
 | ------ | ---------- | ------ | ------------------------------------------- |
 | GET    | `/health`  | public | Uptime/readiness probe (checks DB)          |
 | GET    | `/docs`    | public | Swagger UI                                  |
+| POST   | `/webhooks/clerk` | public (svix-signed) | Provisions a local `User` (+ profile row) on Clerk `user.created` |
 
 ### Business — frontend `/business/*` (supplier dashboard)
 

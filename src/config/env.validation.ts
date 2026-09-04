@@ -20,6 +20,11 @@ export const envSchema = z.object({
   // Auth (Clerk)
   CLERK_SECRET_KEY: z.string().min(1),
   CLERK_PUBLISHABLE_KEY: z.string().min(1),
+  CLERK_WEBHOOK_SECRET: z.string().min(1),
+
+  // Frontend origin, used to build links sent in emails (e.g. the buyer
+  // confirm-invoice magic link).
+  FRONTEND_URL: z.string().url(),
 
   // File storage (Cloudflare R2, S3-compatible)
   R2_ACCOUNT_ID: z.string().min(1),

@@ -20,6 +20,7 @@ import { BuyerModule } from './buyer/buyer.module';
 import { InvestorModule } from './investor/investor.module';
 import { AdminModule } from './admin/admin.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     StorageModule,
     EmailModule,
     HealthModule,
+    WebhooksModule,
 
     // --- Feature areas (1:1 with the frontend route groups) ---
     BusinessModule,

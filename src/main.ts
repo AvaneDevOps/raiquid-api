@@ -7,7 +7,12 @@ import { AppModule } from './app.module';
 import type { Env } from './config/env.validation';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  // rawBody: true exposes req.rawBody, needed by the Clerk webhook route to
+  // verify svix signatures against the exact bytes Clerk sent.
+  const app = await NestFactory.create(AppModule, {
+    bufferLogs: true,
+    rawBody: true,
+  });
 
   // Route Nest's own logs through pino.
   app.useLogger(app.get(Logger));

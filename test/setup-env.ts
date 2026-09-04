@@ -1,0 +1,17 @@
+// Env vars for e2e tests, which boot the real AppModule (and therefore the
+// real zod-validated ConfigModule). DATABASE_URL should point at a real
+// throwaway Postgres (see README) — everything else here is a dummy value,
+// since these tests never make a real Clerk/R2/Resend call.
+process.env.NODE_ENV ??= 'test';
+process.env.PORT ??= '3099';
+process.env.DATABASE_URL ??=
+  'postgresql://raiquid:raiquid@127.0.0.1:5544/raiquid?schema=public';
+process.env.CLERK_SECRET_KEY ??= 'sk_test_e2e_dummy';
+process.env.CLERK_PUBLISHABLE_KEY ??= 'pk_test_e2e_dummy';
+process.env.CLERK_WEBHOOK_SECRET ??= 'whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw';
+process.env.FRONTEND_URL ??= 'http://localhost:3000';
+process.env.R2_ACCOUNT_ID ??= 'e2e-dummy-account';
+process.env.R2_ACCESS_KEY_ID ??= 'e2e-dummy-key';
+process.env.R2_SECRET_ACCESS_KEY ??= 'e2e-dummy-secret';
+process.env.R2_BUCKET_NAME ??= 'e2e-dummy-bucket';
+process.env.RESEND_API_KEY ??= 're_e2e_dummy';
