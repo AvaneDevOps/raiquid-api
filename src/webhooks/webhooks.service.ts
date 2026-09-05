@@ -4,6 +4,7 @@ import { Webhook } from 'svix';
 import type { Env } from '../config/env.validation';
 import { PrismaService } from '../prisma/prisma.service';
 import { UserRole } from '../common/enums';
+import { isUniqueConstraintError } from '../common/prisma-errors';
 import type { ClerkUserData, ClerkWebhookEvent } from './clerk-webhook.types';
 
 function isUserRole(value: unknown): value is UserRole {
@@ -72,71 +73,89 @@ export class WebhooksService {
       return;
     }
 
-    const email =
+    const rawEmail =
       data.email_addresses.find((e) => e.id === data.primary_email_address_id)
         ?.email_address ?? data.email_addresses[0]?.email_address;
-    if (!email) {
+    if (!rawEmail) {
       this.logger.warn(
         `Skipping provisioning for Clerk user ${data.id}: no email address on payload`,
       );
       return;
     }
+    // Normalize so the same address in different casing always matches the
+    // same local User row (email is unique, matched case-sensitively).
+    const email = rawEmail.toLowerCase();
 
     const firstName = data.first_name ?? undefined;
     const lastName = data.last_name ?? undefined;
     const displayName =
       [firstName, lastName].filter(Boolean).join(' ') || email;
 
-    const userId = await this.prisma.$transaction(async (tx) => {
-      const user = await tx.user.upsert({
-        where: { clerkUserId: data.id },
-        create: {
-          clerkUserId: data.id,
-          email,
-          firstName,
-          lastName,
-          role: rawRole,
-        },
-        update: { email, firstName, lastName, role: rawRole },
+    let userId: string;
+    try {
+      userId = await this.prisma.$transaction(async (tx) => {
+        const user = await tx.user.upsert({
+          where: { clerkUserId: data.id },
+          create: {
+            clerkUserId: data.id,
+            email,
+            firstName,
+            lastName,
+            role: rawRole,
+          },
+          update: { email, firstName, lastName, role: rawRole },
+        });
+
+        switch (rawRole) {
+          case UserRole.business:
+            await tx.business.upsert({
+              where: { userId: user.id },
+              create: {
+                userId: user.id,
+                legalName: displayName,
+                contactEmail: email,
+              },
+              update: {},
+            });
+            break;
+          case UserRole.buyer:
+            await tx.buyer.upsert({
+              where: { userId: user.id },
+              create: {
+                userId: user.id,
+                legalName: displayName,
+                contactEmail: email,
+              },
+              update: {},
+            });
+            break;
+          case UserRole.investor:
+            await tx.investor.upsert({
+              where: { userId: user.id },
+              create: { userId: user.id, displayName },
+              update: {},
+            });
+            break;
+          case UserRole.admin:
+            // No profile table for admins.
+            break;
+        }
+
+        return user.id;
       });
-
-      switch (rawRole) {
-        case UserRole.business:
-          await tx.business.upsert({
-            where: { userId: user.id },
-            create: {
-              userId: user.id,
-              legalName: displayName,
-              contactEmail: email,
-            },
-            update: {},
-          });
-          break;
-        case UserRole.buyer:
-          await tx.buyer.upsert({
-            where: { userId: user.id },
-            create: {
-              userId: user.id,
-              legalName: displayName,
-              contactEmail: email,
-            },
-            update: {},
-          });
-          break;
-        case UserRole.investor:
-          await tx.investor.upsert({
-            where: { userId: user.id },
-            create: { userId: user.id, displayName },
-            update: {},
-          });
-          break;
-        case UserRole.admin:
-          // No profile table for admins.
-          break;
+    } catch (err) {
+      // A different clerkUserId already owns this email (e.g. a Clerk account
+      // deleted then recreated — user.deleted isn't handled yet). Retrying
+      // won't fix it, so log and skip instead of 500-ing into Clerk's retry
+      // loop. Relinking accounts is a product decision, not made here.
+      if (isUniqueConstraintError(err)) {
+        this.logger.warn(
+          `Skipping provisioning for Clerk user ${data.id}: email ${email} already belongs to another user`,
+        );
+        return;
       }
-
-      return user.id;
-    });
+      throw err;
+    }
 
     this.logger.log(
       `Provisioned ${rawRole} user ${userId} for Clerk user ${data.id}`,
