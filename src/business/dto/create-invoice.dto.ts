@@ -6,9 +6,7 @@ import {
   IsOptional,
   IsPositive,
   IsString,
-  Max,
   MaxLength,
-  Min,
 } from 'class-validator';
 
 /**
@@ -61,18 +59,9 @@ export class CreateInvoiceDto {
   @MaxLength(32)
   buyerContactPhone?: string;
 
-  // --- Economics (percent values, e.g. 2.5 == 2.5%) ---
-  @ApiPropertyOptional({ example: 2.5 })
-  @IsOptional()
-  @IsNumber({ maxDecimalPlaces: 2 })
-  @Min(0)
-  @Max(100)
-  platformFeePct?: number;
-
-  @ApiPropertyOptional({ example: 5 })
-  @IsOptional()
-  @IsNumber({ maxDecimalPlaces: 2 })
-  @Min(0)
-  @Max(100)
-  reserveContributionPct?: number;
+  // Deliberately no platformFeePct / reserveContributionPct here: fees are
+  // set server-side from the buyer's provenance tier (see
+  // provenance-fee-schedule.ts), never chosen by whoever submits the
+  // invoice. The global ValidationPipe's forbidNonWhitelisted rejects any
+  // request that still sends them.
 }

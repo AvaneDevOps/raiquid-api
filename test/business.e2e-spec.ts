@@ -8,13 +8,20 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { EmailService } from '../src/email/email.service';
 import { ClerkAuthGuard } from '../src/auth/clerk-auth.guard';
 import type { AuthUser } from '../src/auth/auth-user.type';
-import { UserRole } from '../src/common/enums';
+import { ProvenanceTier, UserRole } from '../src/common/enums';
+import { PROVENANCE_FEE_SCHEDULE } from '../src/business/provenance-fee-schedule';
 
 interface InvoiceResponse {
   id: string;
   invoiceNumber: string;
   status: string;
-  buyer: { contactEmail: string; legalName: string };
+  platformFeePct: string;
+  reserveContributionPct: string;
+  buyer: {
+    contactEmail: string;
+    legalName: string;
+    provenanceTier: ProvenanceTier;
+  };
 }
 interface InvoiceListResponse {
   total: number;
@@ -109,12 +116,36 @@ describe('BusinessController (e2e)', () => {
     expect(body.status).toBe('submitted');
     expect(body.buyer.contactEmail).toBe('buyer@acme-buyer.test');
 
+    // Fresh buyer, so the schema default tier; fees come from the schedule
+    // for that tier, never from the request body.
+    expect(body.buyer.provenanceTier).toBe(ProvenanceTier.quarried);
+    const expectedFees = PROVENANCE_FEE_SCHEDULE[body.buyer.provenanceTier];
+    expect(Number(body.platformFeePct)).toBe(expectedFees.platformFeePct);
+    expect(Number(body.reserveContributionPct)).toBe(
+      expectedFees.reserveContributionPct,
+    );
+
     expect(sendConfirmationMock).toHaveBeenCalledTimes(1);
     const [to, confirmUrl] = sendConfirmationMock.mock.calls[0] as string[];
     expect(to).toBe('buyer@acme-buyer.test');
     expect(confirmUrl).toContain('/confirm/');
 
     createdInvoiceId = body.id;
+  });
+
+  it('rejects a request that tries to set fees in the body', async () => {
+    await request(httpServer)
+      .post('/business/invoices')
+      .send({
+        invoiceNumber: 'INV-E2E-FEE',
+        amount: 1000,
+        dueDate: '2026-12-01',
+        buyerLegalName: 'Fee Setter Ltd',
+        buyerContactEmail: 'fee-setter@test.example',
+        platformFeePct: 0,
+        reserveContributionPct: 0,
+      })
+      .expect(400);
   });
 
   it('reads the invoice back by id', async () => {

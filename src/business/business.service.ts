@@ -2,6 +2,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -11,7 +12,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import type { AuthUser } from '../auth/auth-user.type';
 import { WalletTransactionType } from '../common/enums';
+import { isUniqueConstraintError } from '../common/prisma-errors';
 import type { Business } from '../generated/prisma/client';
+import { PROVENANCE_FEE_SCHEDULE } from './provenance-fee-schedule';
 import type { CreateInvoiceDto } from './dto/create-invoice.dto';
 import type { ListInvoicesQueryDto } from './dto/list-invoices.query.dto';
 import type { UpdateBusinessSettingsDto } from './dto/update-business-settings.dto';
@@ -27,6 +30,8 @@ const CREDIT_TYPES = new Set<WalletTransactionType>([
 /** Business area — the supplier-facing dashboard (/business/*). */
 @Injectable()
 export class BusinessService {
+  private readonly logger = new Logger(BusinessService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly email: EmailService,
@@ -58,21 +63,26 @@ export class BusinessService {
     const business = await this.getBusinessForUser(user);
 
     // Buyers aren't authenticated accounts by default, so they're matched by
-    // contact email; there's a small race window between find and create,
-    // acceptable at this scale.
+    // contact email; normalized to lower case so casing differences don't
+    // fragment one buyer (and its provenance tier) across rows. There's a
+    // small race window between find and create, acceptable at this scale.
+    const buyerEmail = dto.buyerContactEmail.toLowerCase();
     const buyer =
       (await this.prisma.buyer.findFirst({
-        where: { contactEmail: dto.buyerContactEmail },
+        where: { contactEmail: buyerEmail },
       })) ??
       (await this.prisma.buyer.create({
         data: {
           legalName: dto.buyerLegalName,
-          contactEmail: dto.buyerContactEmail,
+          contactEmail: buyerEmail,
           contactPhone: dto.buyerContactPhone,
         },
       }));
 
     const confirmToken = randomBytes(32).toString('hex');
+    // Fees are never client input — CreateInvoiceDto has no fee fields at
+    // all, they're resolved from the buyer's provenance tier.
+    const fees = PROVENANCE_FEE_SCHEDULE[buyer.provenanceTier];
 
     const invoice = await this.prisma.invoice
       .create({
@@ -84,8 +94,8 @@ export class BusinessService {
           amount: dto.amount,
           currency: dto.currency ?? 'NGN',
           dueDate: new Date(dto.dueDate),
-          platformFeePct: dto.platformFeePct ?? 0,
-          reserveContributionPct: dto.reserveContributionPct ?? 0,
+          platformFeePct: fees.platformFeePct,
+          reserveContributionPct: fees.reserveContributionPct,
           confirmToken,
         },
         include: { buyer: true },
@@ -99,8 +109,20 @@ export class BusinessService {
         throw err;
       });
 
+    // The invoice is already durably created at this point; a failed email
+    // shouldn't fail the request and leave the client thinking nothing
+    // happened (or retrying into a duplicate-invoiceNumber 409).
     const confirmUrl = `${this.config.get('FRONTEND_URL', { infer: true })}/confirm/${confirmToken}`;
-    await this.email.sendBuyerConfirmationLink(buyer.contactEmail, confirmUrl);
+    try {
+      await this.email.sendBuyerConfirmationLink(
+        buyer.contactEmail,
+        confirmUrl,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Invoice ${invoice.id} created but confirmation email failed to send to ${buyer.contactEmail}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     return invoice;
   }
@@ -156,13 +178,4 @@ export class BusinessService {
     }
     return business;
   }
-}
-
-function isUniqueConstraintError(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'code' in err &&
-    (err as { code?: string }).code === 'P2002'
-  );
 }
