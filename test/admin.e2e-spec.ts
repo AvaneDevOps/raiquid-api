@@ -60,6 +60,7 @@ describe('Admin (e2e)', () => {
     // run, and clears leftovers from a previous run against the same DB.
     await prisma.$transaction([
       prisma.onChainEvent.deleteMany(),
+      prisma.kycDocument.deleteMany(),
       prisma.holding.deleteMany(),
       prisma.walletTransaction.deleteMany(),
       prisma.notification.deleteMany(),

@@ -13,4 +13,5 @@ export {
   OnChainAction,
   OnChainStatus,
   NotificationTone,
+  KycDocumentType,
 } from '../generated/prisma/enums';

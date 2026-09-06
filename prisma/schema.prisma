@@ -78,6 +78,11 @@ enum NotificationTone {
   warning
 }
 
+enum KycDocumentType {
+  identity
+  proof_of_address
+}
+
 // ---------------------------------------------------------------------------
 // Core identity
 // ---------------------------------------------------------------------------
@@ -158,6 +163,21 @@ model Investor {
 
   holdings           Holding[]
   walletTransactions WalletTransaction[]
+  kycDocuments       KycDocument[]
+}
+
+/// A KYC document an investor uploaded for whitelisting review. The file lives
+/// in R2 under `objectKey` (never proxied through this API — the client PUTs
+/// straight to a presigned URL); this row is just the pointer.
+model KycDocument {
+  id           String          @id @default(cuid())
+  investorId   String
+  investor     Investor        @relation(fields: [investorId], references: [id])
+  documentType KycDocumentType
+  objectKey    String
+  createdAt    DateTime        @default(now())
+
+  @@index([investorId])
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, Length, MaxLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsOptional, IsString, Length, MaxLength } from 'class-validator';
 
 /**
  * Body for POST /investor/whitelisting — an investor submitting identity /
@@ -19,4 +19,22 @@ export class SubmitWhitelistingDto {
   @IsString()
   @MaxLength(200)
   legalName!: string;
+
+  @ApiPropertyOptional({
+    description:
+      'objectKey returned by POST /investor/whitelisting/upload-url for the identity document (backend-generated key, not an arbitrary path)',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  identityDocumentKey?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'objectKey returned by POST /investor/whitelisting/upload-url for the proof of address',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  proofOfAddressKey?: string;
 }

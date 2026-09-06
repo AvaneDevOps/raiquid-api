@@ -11,6 +11,7 @@ import { ClerkAuthGuard } from '../src/auth/clerk-auth.guard';
 import type { AuthUser } from '../src/auth/auth-user.type';
 import {
   InvoiceStatus,
+  KycDocumentType,
   WalletTransactionType,
   WhitelistStatus,
   UserRole,
@@ -345,11 +346,73 @@ describe('Investor + fund flow (e2e)', () => {
   });
 
   describe('whitelisting', () => {
-    it('submit moves the status to in_review', async () => {
+    async function getUploadUrl(
+      user: AuthUser,
+      documentType: KycDocumentType,
+      contentType = 'image/png',
+    ) {
+      currentUser = user;
+      const res = await request(httpServer)
+        .post('/investor/whitelisting/upload-url')
+        .send({ documentType, contentType })
+        .expect(201);
+      return res.body as { uploadUrl: string; objectKey: string };
+    }
+
+    it('returns a well-formed presigned R2 upload URL (mechanism, not a real upload)', async () => {
+      const { uploadUrl, objectKey } = await getUploadUrl(
+        investorUser,
+        KycDocumentType.identity,
+      );
+
+      const u = new URL(uploadUrl);
+      expect(u.protocol).toBe('https:');
+      expect(u.host).toContain('.r2.cloudflarestorage.com');
+      // bucket appears somewhere (host for vhost-style, path for path-style)
+      expect(uploadUrl).toContain(String(process.env.R2_BUCKET_NAME));
+      expect(u.pathname).toContain(objectKey);
+      expect(objectKey).toMatch(
+        new RegExp(`^kyc/${investorId}/identity/[0-9a-f-]{36}$`),
+      );
+      // SigV4 query params present
+      expect(u.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/);
+      expect(u.searchParams.get('X-Amz-Expires')).toBe('600');
+      expect(u.searchParams.has('X-Amz-Credential')).toBe(true);
+      expect(u.searchParams.has('X-Amz-Date')).toBe(true);
+      // content-type is bound into the signature (can't swap the file type)
+      expect(u.searchParams.get('X-Amz-SignedHeaders')).toContain(
+        'content-type',
+      );
+    });
+
+    it('rejects a content type outside the KYC allowlist', async () => {
+      currentUser = investorUser;
+      await request(httpServer)
+        .post('/investor/whitelisting/upload-url')
+        .send({ documentType: 'identity', contentType: 'application/zip' })
+        .expect(400);
+    });
+
+    it('submit moves status to in_review and records the KYC documents', async () => {
+      const idDoc = await getUploadUrl(
+        pendingInvestorUser,
+        KycDocumentType.identity,
+      );
+      const addrDoc = await getUploadUrl(
+        pendingInvestorUser,
+        KycDocumentType.proof_of_address,
+        'application/pdf',
+      );
+
       currentUser = pendingInvestorUser;
       await request(httpServer)
         .post('/investor/whitelisting')
-        .send({ countryOfResidence: 'NG', legalName: 'Ada Pending' })
+        .send({
+          countryOfResidence: 'NG',
+          legalName: 'Ada Pending',
+          identityDocumentKey: idDoc.objectKey,
+          proofOfAddressKey: addrDoc.objectKey,
+        })
         .expect(201);
 
       const res = await request(httpServer)
@@ -364,6 +427,34 @@ describe('Investor + fund flow (e2e)', () => {
       });
       expect(row.whitelistStatus).toBe(WhitelistStatus.in_review);
       expect(row.countryOfResidence).toBe('NG');
+
+      const docs = await prisma.kycDocument.findMany({
+        where: { investorId: pendingInvestorId },
+        orderBy: { documentType: 'asc' },
+      });
+      expect(docs.map((d) => d.documentType)).toEqual([
+        KycDocumentType.identity,
+        KycDocumentType.proof_of_address,
+      ]);
+      expect(docs.map((d) => d.objectKey).sort()).toEqual(
+        [idDoc.objectKey, addrDoc.objectKey].sort(),
+      );
+    });
+
+    it("rejects a document key from another investor's namespace", async () => {
+      const foreign = await getUploadUrl(
+        investorUser,
+        KycDocumentType.identity,
+      );
+      currentUser = pendingInvestorUser;
+      await request(httpServer)
+        .post('/investor/whitelisting')
+        .send({
+          countryOfResidence: 'NG',
+          legalName: 'Ada Pending',
+          identityDocumentKey: foreign.objectKey,
+        })
+        .expect(400);
     });
   });
 

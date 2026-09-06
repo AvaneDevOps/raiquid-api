@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   ConflictException,
@@ -6,15 +7,18 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import type { AuthUser } from '../auth/auth-user.type';
 import type { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import {
   InvoiceStatus,
+  KycDocumentType,
   WalletTransactionType,
   WhitelistStatus,
 } from '../common/enums';
 import { walletBalance } from '../common/wallet-balance';
 import type { Investor } from '../generated/prisma/client';
+import type { CreateUploadUrlDto } from './dto/create-upload-url.dto';
 import type { FundInvoiceDto } from './dto/fund-invoice.dto';
 import type { SubmitWhitelistingDto } from './dto/submit-whitelisting.dto';
 import type { UpdateInvestorSettingsDto } from './dto/update-investor-settings.dto';
@@ -28,7 +32,10 @@ const OPEN_FOR_INVESTMENT: InvoiceStatus[] = [
 /** Investor area — the funder-facing dashboard (/investor/*). */
 @Injectable()
 export class InvestorService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   async listMarketplace(user: AuthUser, query: PaginationQueryDto) {
     // Browsing only needs an investor account, not a whitelisted one —
@@ -207,18 +214,63 @@ export class InvestorService {
     };
   }
 
+  async createWhitelistingUploadUrl(
+    user: AuthUser,
+    dto: CreateUploadUrlDto,
+  ): Promise<{ uploadUrl: string; objectKey: string }> {
+    const investor = await this.getInvestorForUser(user);
+    // Key is generated here, never taken from the client — a client-supplied
+    // key is a path-traversal / overwrite-someone-else's-document risk.
+    const objectKey = `kyc/${investor.id}/${dto.documentType}/${randomUUID()}`;
+    const uploadUrl = await this.storage.createUploadUrl(
+      objectKey,
+      dto.contentType,
+    );
+    return { uploadUrl, objectKey };
+  }
+
   async submitWhitelisting(user: AuthUser, dto: SubmitWhitelistingDto) {
     const investor = await this.getInvestorForUser(user);
-    // No admin notification: there's no admin contact list or notification
-    // target defined anywhere yet. KYC document upload isn't modelled either
-    // (see docs/RAIQUID_CONTEXT.md) — only country + legal name are captured.
-    return this.prisma.investor.update({
-      where: { id: investor.id },
-      data: {
-        countryOfResidence: dto.countryOfResidence,
-        displayName: dto.legalName,
-        whitelistStatus: WhitelistStatus.in_review,
-      },
+    const prefix = `kyc/${investor.id}/`;
+
+    const docs: { documentType: KycDocumentType; objectKey: string }[] = [];
+    if (dto.identityDocumentKey) {
+      docs.push({
+        documentType: KycDocumentType.identity,
+        objectKey: dto.identityDocumentKey,
+      });
+    }
+    if (dto.proofOfAddressKey) {
+      docs.push({
+        documentType: KycDocumentType.proof_of_address,
+        objectKey: dto.proofOfAddressKey,
+      });
+    }
+    // The keys should have come from createWhitelistingUploadUrl for THIS
+    // investor; reject anything outside that namespace.
+    if (docs.some((d) => !d.objectKey.startsWith(prefix))) {
+      throw new BadRequestException(
+        'Document key does not belong to this investor',
+      );
+    }
+
+    // No admin notification — there's no admin contact list or notification
+    // target defined anywhere yet.
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.investor.update({
+        where: { id: investor.id },
+        data: {
+          countryOfResidence: dto.countryOfResidence,
+          displayName: dto.legalName,
+          whitelistStatus: WhitelistStatus.in_review,
+        },
+      });
+      if (docs.length > 0) {
+        await tx.kycDocument.createMany({
+          data: docs.map((d) => ({ ...d, investorId: investor.id })),
+        });
+      }
+      return updated;
     });
   }
 

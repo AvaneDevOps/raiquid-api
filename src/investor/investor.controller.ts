@@ -12,6 +12,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/auth-user.type';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import { InvestorService } from './investor.service';
+import { CreateUploadUrlDto } from './dto/create-upload-url.dto';
 import { FundInvoiceDto } from './dto/fund-invoice.dto';
 import { SubmitWhitelistingDto } from './dto/submit-whitelisting.dto';
 import { UpdateInvestorSettingsDto } from './dto/update-investor-settings.dto';
@@ -73,6 +74,17 @@ export class InvestorController {
   @ApiOperation({ summary: 'Get whitelisting status' })
   getWhitelisting(@CurrentUser() user: AuthUser) {
     return this.investor.getWhitelisting(user);
+  }
+
+  @Post('whitelisting/upload-url')
+  @ApiOperation({
+    summary: 'Get a presigned R2 URL to upload one KYC document',
+  })
+  createWhitelistingUploadUrl(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateUploadUrlDto,
+  ) {
+    return this.investor.createWhitelistingUploadUrl(user, dto);
   }
 
   @Post('whitelisting')

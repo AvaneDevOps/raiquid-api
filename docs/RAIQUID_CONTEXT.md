@@ -91,13 +91,18 @@ learned from the frontend that affect future backend work.
   should be populated from the actual mint/transfer event, not mirrored
   from the fiat amount.
 
-- **KYC documents submitted for whitelisting aren't captured.**
-  `SubmitWhitelistingDto`'s `identityDocumentKey` / `proofOfAddressKey`
-  fields were **removed** — Swagger documented them but nothing read
-  them: `StorageService` isn't wired up and the `Investor` model has no
-  field for R2 object keys. A real KYC review needs both — a storage
-  upload path *and* somewhere to persist the keys (fields on `Investor`,
-  or a dedicated `KycSubmission` model). Reintroduce the DTO fields then.
+- **KYC upload isn't verified.** `POST /investor/whitelisting/upload-url`
+  returns a presigned R2 PUT URL (key generated server-side as
+  `kyc/{investorId}/{documentType}/{uuid}`, `contentType` bound into the
+  signature). `submitWhitelisting` then records a `KycDocument` row per
+  key. What it does **not** do: confirm the object actually landed in R2.
+  A client can request a URL and never PUT to it, or claim it uploaded
+  and pass the key anyway — the row would point at nothing. Real KYC
+  review needs a HEAD check (at submit, or lazily when an admin opens the
+  doc) or an R2 event notification. Also: this has only ever been
+  exercised against placeholder R2 credentials — presigning is a local
+  signature computation so the URL *shape* is verified, but no real
+  upload has happened.
 
 - **`/admin/overview` on-time repayment rate is an approximation.**
   There is no `repaidAt` column (deferred here twice already), so

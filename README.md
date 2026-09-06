@@ -178,11 +178,12 @@ opaque confirm token.
 ## Conventions
 
 - **No dead DTO fields.** A request-DTO field that no service method actually
-  reads gets *removed* before merge, not left in with a comment. Swagger
-  publishes every DTO field at `/docs`, and a frontend developer has no way
-  to tell a real field from a placeholder one — so a field that can't do
-  anything yet must not be in the public contract. Reintroduce it in the
-  same change that makes it functional.
+  reads gets *fixed or removed* before merge — never left in with a comment.
+  Swagger publishes every DTO field at `/docs`, and a frontend developer has
+  no way to tell a real field from a placeholder one, so a field that can't
+  do anything yet must not be in the public contract. Either wire it up in
+  the same change, or drop it and reintroduce it alongside the code that
+  makes it functional.
 - **Commit scopes** are area-based and enforced by commitlint — see
   `commitlint.config.js`.
 
