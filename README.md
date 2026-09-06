@@ -77,6 +77,13 @@ Clerk session or Resend call is needed. The script runs Jest under
 `--experimental-vm-modules`: Prisma 7's driver-adapter query compiler loads
 itself via a dynamic `import()`, which Jest only supports with that flag.
 
+The script also passes `--runInBand`. Every spec generates unique fixture
+ids per run (`randomUUID()`), so parallel workers won't collide on
+`User.clerkUserId` / `User.email` — but these suites all hammer one shared
+Postgres, and serial execution keeps table-level contention and interleaving
+out of the picture, which matters more for a DB integration suite than the
+~2s parallelism would save.
+
 ## Environment variables
 
 Validated at boot by [`src/config/env.validation.ts`](src/config/env.validation.ts);

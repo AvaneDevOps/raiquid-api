@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import type { ExecutionContext, INestApplication } from '@nestjs/common';
 import type { Server } from 'node:http';
@@ -30,7 +31,11 @@ describe('Buyer + Confirm (e2e)', () => {
   let businessId: string;
   let buyerId: string;
 
-  const BUYER_EMAIL = 'buyer-e2e@test.example';
+  // Unique per run so repeated runs against a non-recreated DB don't create
+  // duplicate Buyer rows for the same email (BusinessService matches buyers
+  // by contactEmail and takes the oldest — see the earlier flake).
+  const RUN = randomUUID();
+  const BUYER_EMAIL = `buyer-${RUN}@test.example`;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -58,8 +63,8 @@ describe('Buyer + Confirm (e2e)', () => {
 
     const bUser = await prisma.user.create({
       data: {
-        clerkUserId: `clerk_e2e_biz_${Date.now()}`,
-        email: `biz-owner-${Date.now()}@acme.test`,
+        clerkUserId: `clerk_e2e_biz_${RUN}`,
+        email: `biz-owner-${RUN}@acme.test`,
         role: UserRole.business,
       },
     });
@@ -81,8 +86,8 @@ describe('Buyer + Confirm (e2e)', () => {
 
     const buUser = await prisma.user.create({
       data: {
-        clerkUserId: `clerk_e2e_buyer_${Date.now()}`,
-        email: `buyer-acc-${Date.now()}@acme.test`,
+        clerkUserId: `clerk_e2e_buyer_${RUN}`,
+        email: `buyer-acc-${RUN}@acme.test`,
         role: UserRole.buyer,
       },
     });
@@ -313,7 +318,10 @@ describe('Buyer + Confirm (e2e)', () => {
     it("rejects paying an invoice that is not this buyer's", async () => {
       currentUser = buyerUser;
       const otherBuyer = await prisma.buyer.create({
-        data: { legalName: 'Someone Else', contactEmail: 'other@test.example' },
+        data: {
+          legalName: 'Someone Else',
+          contactEmail: `other-${RUN}@test.example`,
+        },
       });
       const otherInv = await seedInvoice({
         invoiceNumber: 'INV-PAY-NOTMINE',

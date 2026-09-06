@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import type { Server } from 'node:http';
@@ -40,7 +41,7 @@ describe('WebhooksController (e2e)', () => {
     const webhook = new Webhook(secret);
 
     sign = (payload: string) => {
-      const id = `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      const id = `msg_${randomUUID()}`;
       const timestamp = new Date();
       return {
         id,
@@ -55,8 +56,8 @@ describe('WebhooksController (e2e)', () => {
   });
 
   it('provisions a User + Business row on a signed user.created event', async () => {
-    const clerkUserId = `user_e2e_${Date.now()}`;
-    const email = `webhook-e2e-${Date.now()}@acme.test`;
+    const clerkUserId = `user_e2e_${randomUUID()}`;
+    const email = `webhook-e2e-${randomUUID()}@acme.test`;
     const payload = JSON.stringify({
       type: 'user.created',
       data: {
@@ -105,12 +106,14 @@ describe('WebhooksController (e2e)', () => {
   });
 
   it('skips provisioning when the role is missing', async () => {
-    const clerkUserId = `user_e2e_norole_${Date.now()}`;
+    const clerkUserId = `user_e2e_norole_${randomUUID()}`;
     const payload = JSON.stringify({
       type: 'user.created',
       data: {
         id: clerkUserId,
-        email_addresses: [{ id: 'idn_1', email_address: 'no-role@acme.test' }],
+        email_addresses: [
+          { id: 'idn_1', email_address: `no-role-${randomUUID()}@acme.test` },
+        ],
         primary_email_address_id: 'idn_1',
         first_name: null,
         last_name: null,

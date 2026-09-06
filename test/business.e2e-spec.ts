@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import type { ExecutionContext, INestApplication } from '@nestjs/common';
 import type { Server } from 'node:http';
@@ -34,6 +35,11 @@ interface BusinessSettingsResponse {
 // Cold-starting Prisma's query compiler plus a real DB round trip can exceed
 // Jest's 5s default hook timeout under load.
 jest.setTimeout(30_000);
+
+// Unique per run — repeated runs against a non-recreated DB (and parallel
+// suites) must not collide on User.clerkUserId / User.email or reuse a buyer.
+const RUN = randomUUID();
+const BUYER_EMAIL = `buyer-${RUN}@acme-buyer.test`;
 
 describe('BusinessController (e2e)', () => {
   let app: INestApplication;
@@ -73,8 +79,8 @@ describe('BusinessController (e2e)', () => {
 
     const user = await prisma.user.create({
       data: {
-        clerkUserId: `clerk_e2e_business_${Date.now()}`,
-        email: `owner-${Date.now()}@acme.test`,
+        clerkUserId: `clerk_e2e_business_${RUN}`,
+        email: `owner-${RUN}@acme.test`,
         role: UserRole.business,
       },
     });
@@ -107,14 +113,14 @@ describe('BusinessController (e2e)', () => {
         amount: 150000,
         dueDate: '2026-12-01',
         buyerLegalName: 'Acme Buyer Ltd',
-        buyerContactEmail: 'buyer@acme-buyer.test',
+        buyerContactEmail: BUYER_EMAIL,
       })
       .expect(201);
     const body = res.body as InvoiceResponse;
 
     expect(body.invoiceNumber).toBe('INV-E2E-001');
     expect(body.status).toBe('submitted');
-    expect(body.buyer.contactEmail).toBe('buyer@acme-buyer.test');
+    expect(body.buyer.contactEmail).toBe(BUYER_EMAIL);
 
     // Fresh buyer, so the schema default tier; fees come from the schedule
     // for that tier, never from the request body.
@@ -127,7 +133,7 @@ describe('BusinessController (e2e)', () => {
 
     expect(sendConfirmationMock).toHaveBeenCalledTimes(1);
     const [to, confirmUrl] = sendConfirmationMock.mock.calls[0] as string[];
-    expect(to).toBe('buyer@acme-buyer.test');
+    expect(to).toBe(BUYER_EMAIL);
     expect(confirmUrl).toContain('/confirm/');
 
     createdInvoiceId = body.id;
@@ -141,7 +147,7 @@ describe('BusinessController (e2e)', () => {
         amount: 1000,
         dueDate: '2026-12-01',
         buyerLegalName: 'Fee Setter Ltd',
-        buyerContactEmail: 'fee-setter@test.example',
+        buyerContactEmail: `fee-setter-${RUN}@test.example`,
         platformFeePct: 0,
         reserveContributionPct: 0,
       })
@@ -175,7 +181,7 @@ describe('BusinessController (e2e)', () => {
         amount: 1000,
         dueDate: '2026-12-01',
         buyerLegalName: 'Someone Else',
-        buyerContactEmail: 'someone-else@test.example',
+        buyerContactEmail: `someone-else-${RUN}@test.example`,
       })
       .expect(409);
   });
