@@ -99,6 +99,17 @@ learned from the frontend that affect future backend work.
   upload path *and* somewhere to persist the keys (fields on `Investor`,
   or a dedicated `KycSubmission` model). Reintroduce the DTO fields then.
 
+- **`/admin/overview` on-time repayment rate is an approximation.**
+  There is no `repaidAt` column (deferred here twice already), so
+  `AdminService.getOverview` uses `Invoice.updatedAt <= dueDate` (day
+  granularity) as the on-time signal for repaid invoices. `updatedAt` is
+  touched by *any* field write, not just the repaid transition, so the
+  rate can drift in either direction. It's returned with an explicit
+  `definitions.onTimeRepaymentRate` label and is `null` until anything is
+  repaid. A real implementation needs the `repaidAt` field — the same one
+  the partial-payment and repayment-audit gaps above also need. This is
+  the third feature to want it; it's probably time.
+
 - **Concurrent funding of the same invoice has a race window.**
   `fundInvoice` reads the invoice, checks `remaining >= amount`, then
   writes in a transaction using an atomic `increment` on `fundedAmount`.
