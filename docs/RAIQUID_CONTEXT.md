@@ -28,6 +28,38 @@ learned from the frontend that affect future backend work.
   placeholders — this is not a "all tiers are equal" decision. Real numbers
   for those two are needed from product before this ships.
 
+- **`InvoiceStatus` has no declined / disputed state.** When a buyer
+  reviews an invoice via the magic link and chooses *dispute*
+  (`POST /confirm/:invoiceId/review` with `accept: false`), the backend
+  only emails the business — it does not change `Invoice.status`, because
+  the enum has no value for "buyer rejected this" and the frontend's
+  `InvoiceStatus` type mirrors this enum exactly. Adding a value is a
+  cross-repo contract change, not a backend-only call. Consequence until
+  then: a disputed invoice stays `submitted` and its dispute exists only
+  as an email, and the decline path is replayable (nothing records that a
+  review already happened, unlike accept which sets `confirmedAt`).
+
+- **Buyer reputation metrics are not computed.** `Buyer.acceptanceRate`,
+  `onTimePaymentRate`, and `invoicesFinancedCount` are left at their
+  defaults. The confirm/accept/decline and pay flows deliberately do not
+  touch them: there's no agreed formula yet (what's the denominator? does
+  a decline count against acceptance? does an early payment help
+  on-time rate?). These metrics are what a buyer's provenance tier is
+  expected to be derived from, and the tier drives the fee schedule, so a
+  wrong formula would eventually mis-price invoices. Needs a
+  product-defined formula before wiring up.
+
+- **Invoice repayment doesn't reach investors.** `POST /buyer/invoices/:id/pay`
+  moves a `funded` / `overdue` invoice straight to `repaid`. It does not
+  distribute the repayment to `Holding` rows or investor wallets, because
+  the Investor module isn't built and no holdings meaningfully exist yet.
+  Blocked on Investor funding being implemented.
+
+- **Partial invoice payments aren't supported.** `payInvoice` requires
+  `dto.amount` to exactly equal `Invoice.amount`; a mismatch is a 400.
+  There's no field on `Invoice` tracking a running paid balance, and
+  adding one is a schema change (cross-repo coordination point).
+
 ## Accepted npm audit findings
 
 `npm audit` reports 4 high-severity findings (`mysql2`, `deepmerge-ts`).

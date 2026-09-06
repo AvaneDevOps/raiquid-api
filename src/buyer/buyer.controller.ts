@@ -1,8 +1,17 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/auth-user.type';
 import { BuyerService } from './buyer.service';
+import { ListInvoicesQueryDto } from './dto/list-invoices.query.dto';
 import { PayInvoiceDto } from './dto/pay-invoice.dto';
 import { UpdateBuyerSettingsDto } from './dto/update-buyer-settings.dto';
 
@@ -18,8 +27,11 @@ export class BuyerController {
 
   @Get('invoices')
   @ApiOperation({ summary: 'List invoices this buyer owes' })
-  listInvoices(@CurrentUser() user: AuthUser) {
-    return this.buyer.listInvoices(user);
+  listInvoices(
+    @CurrentUser() user: AuthUser,
+    @Query() query: ListInvoicesQueryDto,
+  ) {
+    return this.buyer.listInvoices(user, query);
   }
 
   @Get('payment-schedule')

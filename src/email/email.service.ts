@@ -51,6 +51,36 @@ export class EmailService {
   }
 
   /**
+   * Notify the business that the buyer has responded to a confirmation
+   * request. Triggered from POST /confirm/:invoiceId/review.
+   */
+  async sendBuyerReviewOutcome(
+    to: string,
+    opts: { invoiceNumber: string; accepted: boolean; note?: string },
+  ): Promise<void> {
+    const verdict = opts.accepted ? 'accepted' : 'disputed';
+    const noteLine = opts.note ? `\n\nBuyer's note: ${opts.note}` : '';
+    const { error } = await this.resend.emails.send({
+      from: FROM_ADDRESS,
+      to,
+      subject: `Invoice ${opts.invoiceNumber} was ${verdict} by the buyer`,
+      html: `<p>The buyer has <strong>${verdict}</strong> invoice ${opts.invoiceNumber}.</p>${
+        opts.note ? `<p>Buyer's note: ${opts.note}</p>` : ''
+      }`,
+      text: `The buyer has ${verdict} invoice ${opts.invoiceNumber}.${noteLine}`,
+    });
+
+    if (error) {
+      this.logger.error(
+        `Resend failed to send review outcome to ${to}: ${error.message}`,
+      );
+      throw new Error(
+        `Failed to send buyer review outcome email: ${error.message}`,
+      );
+    }
+  }
+
+  /**
    * Notify an investor that their whitelisting review completed.
    * Supports GET /investor/whitelisting status changes.
    */

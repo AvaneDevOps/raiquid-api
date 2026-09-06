@@ -1,5 +1,17 @@
-import { Injectable, NotImplementedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { EmailService } from '../email/email.service';
 import type { AuthUser } from '../auth/auth-user.type';
+import { InvoiceStatus } from '../common/enums';
+import type { Buyer } from '../generated/prisma/client';
+import type { ListInvoicesQueryDto } from './dto/list-invoices.query.dto';
 import type { PayInvoiceDto } from './dto/pay-invoice.dto';
 import type { ReviewConfirmationDto } from './dto/review-confirmation.dto';
 import type { UpdateBuyerSettingsDto } from './dto/update-buyer-settings.dto';
@@ -7,65 +19,173 @@ import type { UpdateBuyerSettingsDto } from './dto/update-buyer-settings.dto';
 /**
  * Buyer area — the debtor-facing dashboard (/buyer/*) plus the PUBLIC
  * magic-link confirm flow (/confirm/*).
- *
- * All method bodies are stubs per the project-structure scope.
  */
 @Injectable()
 export class BuyerService {
-  /** GET /buyer/invoices — frontend: /buyer/invoices. */
-  listInvoices(_user: AuthUser): Promise<unknown> {
-    // TODO: implement. Invoices where this buyer is the debtor.
-    throw new NotImplementedException();
+  private readonly logger = new Logger(BuyerService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly email: EmailService,
+  ) {}
+
+  // --- authenticated buyer endpoints ---
+
+  async listInvoices(user: AuthUser, query: ListInvoicesQueryDto) {
+    const buyer = await this.getBuyerForUser(user);
+    const where = {
+      buyerId: buyer.id,
+      ...(query.status ? { status: query.status } : {}),
+    };
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.invoice.findMany({
+        where,
+        include: { business: true },
+        orderBy: { createdAt: 'desc' },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.prisma.invoice.count({ where }),
+    ]);
+
+    return { data, page: query.page, pageSize: query.pageSize, total };
   }
 
-  /** GET /buyer/payment-schedule — frontend: /buyer/payment-schedule. */
-  getPaymentSchedule(_user: AuthUser): Promise<unknown> {
-    // TODO: implement. Upcoming/overdue repayments across this buyer's invoices.
-    throw new NotImplementedException();
+  async getPaymentSchedule(user: AuthUser) {
+    const buyer = await this.getBuyerForUser(user);
+    return this.prisma.invoice.findMany({
+      where: {
+        buyerId: buyer.id,
+        status: { in: [InvoiceStatus.funded, InvoiceStatus.overdue] },
+      },
+      include: { business: true },
+      orderBy: { dueDate: 'asc' },
+    });
   }
 
-  /** POST /buyer/invoices/:id/pay — frontend: /buyer/payment-schedule "Pay". */
-  payInvoice(
-    _user: AuthUser,
-    _invoiceId: string,
-    _dto: PayInvoiceDto,
-  ): Promise<unknown> {
-    // TODO: implement. Record a repayment WalletTransaction, advance the
-    // invoice toward `repaid`, fan out repayment to holders.
-    throw new NotImplementedException();
+  async getSettings(user: AuthUser) {
+    return this.getBuyerForUser(user);
   }
 
-  /** GET /buyer/settings — frontend: /buyer/settings. */
-  getSettings(_user: AuthUser): Promise<unknown> {
-    // TODO: implement.
-    throw new NotImplementedException();
+  async updateSettings(user: AuthUser, dto: UpdateBuyerSettingsDto) {
+    const buyer = await this.getBuyerForUser(user);
+    return this.prisma.buyer.update({
+      where: { id: buyer.id },
+      data: { ...dto },
+    });
   }
 
-  /** PATCH /buyer/settings — frontend: /buyer/settings. */
-  updateSettings(
-    _user: AuthUser,
-    _dto: UpdateBuyerSettingsDto,
-  ): Promise<unknown> {
-    // TODO: implement.
-    throw new NotImplementedException();
+  async payInvoice(user: AuthUser, invoiceId: string, dto: PayInvoiceDto) {
+    const buyer = await this.getBuyerForUser(user);
+    const invoice = await this.prisma.invoice.findFirst({
+      where: { id: invoiceId, buyerId: buyer.id },
+    });
+    if (!invoice) {
+      throw new NotFoundException('Invoice not found');
+    }
+
+    if (
+      invoice.status !== InvoiceStatus.funded &&
+      invoice.status !== InvoiceStatus.overdue
+    ) {
+      throw new ConflictException(
+        `Invoice cannot be paid in status "${invoice.status}" (must be funded or overdue)`,
+      );
+    }
+
+    // No partial-payment tracking on Invoice, so only a full payment is
+    // accepted — see docs/RAIQUID_CONTEXT.md.
+    if (Number(dto.amount) !== Number(invoice.amount)) {
+      throw new BadRequestException(
+        `Payment amount must exactly equal the invoice amount (${invoice.amount.toString()})`,
+      );
+    }
+
+    // Not fanning the repayment out to investor holdings / wallets: the
+    // Investor module isn't built, so there are no holdings to credit —
+    // see docs/RAIQUID_CONTEXT.md.
+    return this.prisma.invoice.update({
+      where: { id: invoice.id },
+      data: { status: InvoiceStatus.repaid },
+    });
   }
 
-  // --- PUBLIC magic-link confirm flow (no Clerk session) ---
+  // --- public magic-link confirm flow (no Clerk session) ---
 
-  /** GET /confirm/:invoiceId — frontend: standalone /confirm/[invoiceId]. */
-  getConfirmation(_confirmToken: string): Promise<unknown> {
-    // TODO: implement. Resolve the Invoice by confirmToken, return a
-    // read-only summary for the buyer to review. 404 if token unknown.
-    throw new NotImplementedException();
+  async getConfirmation(confirmToken: string) {
+    const invoice = await this.prisma.invoice.findUnique({
+      where: { confirmToken },
+      include: { buyer: true, business: true },
+    });
+    if (!invoice) {
+      throw new NotFoundException('Confirmation link is invalid');
+    }
+    return invoice;
   }
 
-  /** POST /confirm/:invoiceId/review — frontend: standalone /confirm/[invoiceId]. */
-  submitConfirmationReview(
-    _confirmToken: string,
-    _dto: ReviewConfirmationDto,
-  ): Promise<unknown> {
-    // TODO: implement. Accept -> move invoice to `tokenized` and notify the
-    // business + trigger minting; dispute -> flag and notify the business.
-    throw new NotImplementedException();
+  async submitConfirmationReview(
+    confirmToken: string,
+    dto: ReviewConfirmationDto,
+  ) {
+    const invoice = await this.prisma.invoice.findUnique({
+      where: { confirmToken },
+      include: { business: { include: { user: true } } },
+    });
+    if (!invoice) {
+      throw new NotFoundException('Confirmation link is invalid');
+    }
+    if (invoice.confirmedAt) {
+      throw new ConflictException('This invoice has already been reviewed');
+    }
+
+    // Business.contactEmail is optional; fall back to the owner's account email.
+    const businessEmail =
+      invoice.business.contactEmail ?? invoice.business.user.email;
+
+    if (dto.accept) {
+      const updated = await this.prisma.invoice.update({
+        where: { id: invoice.id },
+        data: { status: InvoiceStatus.tokenized, confirmedAt: new Date() },
+      });
+      // Status change is the durable outcome; a failed notification email
+      // shouldn't undo it or fail the request.
+      try {
+        await this.email.sendBuyerReviewOutcome(businessEmail, {
+          invoiceNumber: invoice.invoiceNumber,
+          accepted: true,
+          note: dto.note,
+        });
+      } catch (err) {
+        this.logger.error(
+          `Invoice ${invoice.id} tokenized but business notification failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      return updated;
+    }
+
+    // accept=false: no status change — InvoiceStatus has no declined/disputed
+    // value, and inventing one backend-only would diverge the shared contract
+    // (see docs/RAIQUID_CONTEXT.md). The notification IS the whole outcome
+    // here, so a send failure propagates rather than being swallowed.
+    await this.email.sendBuyerReviewOutcome(businessEmail, {
+      invoiceNumber: invoice.invoiceNumber,
+      accepted: false,
+      note: dto.note,
+    });
+    return invoice;
+  }
+
+  private async getBuyerForUser(user: AuthUser): Promise<Buyer> {
+    if (!user.dbUserId) {
+      throw new ForbiddenException('User is not provisioned yet');
+    }
+    const buyer = await this.prisma.buyer.findUnique({
+      where: { userId: user.dbUserId },
+    });
+    if (!buyer) {
+      throw new NotFoundException('Buyer profile not found');
+    }
+    return buyer;
   }
 }
