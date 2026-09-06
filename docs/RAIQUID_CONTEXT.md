@@ -61,6 +61,14 @@ learned from the frontend that affect future backend work.
   There's no field on `Invoice` tracking a running paid balance, and
   adding one is a schema change (cross-repo coordination point).
 
+- **Repayment carries no reference / audit trail.** `payInvoice` only
+  flips `Invoice.status` to `repaid` — it does not create a
+  `WalletTransaction`, so there's nowhere to record a buyer-supplied
+  payment reference. `PayInvoiceDto.paymentReference` was **removed**
+  (it was documented in Swagger but read by nothing). Reintroduce it
+  once repayment creates a `repayment` `WalletTransaction` for the
+  reference to live on.
+
 - **Marketplace browsing is open; funding is whitelist-gated.**
   `GET /investor/marketplace` and `/marketplace/:id` only require an
   Investor profile — not a `whitelisted` status — matching the frontend,
@@ -83,12 +91,13 @@ learned from the frontend that affect future backend work.
   should be populated from the actual mint/transfer event, not mirrored
   from the fiat amount.
 
-- **KYC documents submitted for whitelisting aren't stored.**
-  `SubmitWhitelistingDto` carries `identityDocumentKey` /
-  `proofOfAddressKey` (R2 object keys), but the `Investor` model has no
-  field for them, so `submitWhitelisting` drops them. A real KYC review
-  needs these persisted — a schema change (fields on `Investor`, or a
-  dedicated `KycSubmission` model).
+- **KYC documents submitted for whitelisting aren't captured.**
+  `SubmitWhitelistingDto`'s `identityDocumentKey` / `proofOfAddressKey`
+  fields were **removed** — Swagger documented them but nothing read
+  them: `StorageService` isn't wired up and the `Investor` model has no
+  field for R2 object keys. A real KYC review needs both — a storage
+  upload path *and* somewhere to persist the keys (fields on `Investor`,
+  or a dedicated `KycSubmission` model). Reintroduce the DTO fields then.
 
 - **Concurrent funding of the same invoice has a race window.**
   `fundInvoice` reads the invoice, checks `remaining >= amount`, then

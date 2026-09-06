@@ -175,6 +175,17 @@ opaque confirm token.
 | ------ | ---------------- | -------------------------------- |
 | GET    | `/notifications` | notifications tray (all layouts) |
 
+## Conventions
+
+- **No dead DTO fields.** A request-DTO field that no service method actually
+  reads gets *removed* before merge, not left in with a comment. Swagger
+  publishes every DTO field at `/docs`, and a frontend developer has no way
+  to tell a real field from a placeholder one — so a field that can't do
+  anything yet must not be in the public contract. Reintroduce it in the
+  same change that makes it functional.
+- **Commit scopes** are area-based and enforced by commitlint — see
+  `commitlint.config.js`.
+
 ## Git hooks
 
 This repo uses [Husky](https://typicode.github.io/husky/) to run checks

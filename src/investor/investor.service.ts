@@ -210,8 +210,8 @@ export class InvestorService {
   async submitWhitelisting(user: AuthUser, dto: SubmitWhitelistingDto) {
     const investor = await this.getInvestorForUser(user);
     // No admin notification: there's no admin contact list or notification
-    // target defined anywhere yet. The DTO's KYC document keys also have
-    // nowhere to be stored without a schema change (see docs/RAIQUID_CONTEXT.md).
+    // target defined anywhere yet. KYC document upload isn't modelled either
+    // (see docs/RAIQUID_CONTEXT.md) — only country + legal name are captured.
     return this.prisma.investor.update({
       where: { id: investor.id },
       data: {
