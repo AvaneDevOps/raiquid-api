@@ -49,25 +49,23 @@ learned from the frontend that affect future backend work.
   wrong formula would eventually mis-price invoices. Needs a
   product-defined formula before wiring up.
 
-- **Invoice repayment doesn't reach investors.** `POST /buyer/invoices/:id/pay`
-  moves a `funded` / `overdue` invoice straight to `repaid`. `Holding` rows
-  now exist (created by investor funding), so the fan-out target is there —
-  but the distribution logic (credit each holder's wallet pro rata, minus
-  the investor return fee, set `Holding.repaidAmount`) still isn't written.
-  Needs the investor return-fee decision above resolved first.
+- **Repayment fan-out is principal-only — no investor return.**
+  `POST /buyer/invoices/:id/pay` now distributes the repayment: one
+  `repayment` `WalletTransaction` per `Holding` for exactly
+  `holding.amount`, `Holding.repaidAmount` set, `dto.paymentReference`
+  written to each transaction's `description`. But investors get back
+  only their principal — there's no yield/return. The real product pays
+  a return, and there's no field to compute it from: `Invoice` has
+  `platformFeePct` / `reserveContributionPct` (business-side), nothing
+  investor-side. Blocked on (a) a schema field like
+  `Invoice.expectedReturnPct` and (b) a decision on how/when that rate
+  is set (at tokenization? per provenance tier? investor-negotiated?).
+  Until then a "repaid" investor is made whole but earns nothing.
 
 - **Partial invoice payments aren't supported.** `payInvoice` requires
   `dto.amount` to exactly equal `Invoice.amount`; a mismatch is a 400.
   There's no field on `Invoice` tracking a running paid balance, and
   adding one is a schema change (cross-repo coordination point).
-
-- **Repayment carries no reference / audit trail.** `payInvoice` only
-  flips `Invoice.status` to `repaid` — it does not create a
-  `WalletTransaction`, so there's nowhere to record a buyer-supplied
-  payment reference. `PayInvoiceDto.paymentReference` was **removed**
-  (it was documented in Swagger but read by nothing). Reintroduce it
-  once repayment creates a `repayment` `WalletTransaction` for the
-  reference to live on.
 
 - **Marketplace browsing is open; funding is whitelist-gated.**
   `GET /investor/marketplace` and `/marketplace/:id` only require an

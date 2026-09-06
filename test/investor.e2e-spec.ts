@@ -30,6 +30,8 @@ describe('Investor + fund flow (e2e)', () => {
   let businessUser: AuthUser;
   let businessId: string;
   let buyerId: string;
+  // authenticated buyer that owns the invoices createTokenizedInvoice makes
+  let buyerUser: AuthUser;
 
   // whitelisted, funded wallet
   let investorUser: AuthUser;
@@ -39,6 +41,9 @@ describe('Investor + fund flow (e2e)', () => {
   // not whitelisted
   let pendingInvestorUser: AuthUser;
   let pendingInvestorId: string;
+  // whitelisted + funded, used only for the repayment fan-out test
+  let repayInvestorUser: AuthUser;
+  let repayInvestorId: string;
 
   const authFor = (dbUserId: string, role: UserRole): AuthUser => ({
     clerkUserId: `clerk_${role}_${dbUserId}`,
@@ -114,13 +119,22 @@ describe('Investor + fund flow (e2e)', () => {
     businessId = biz.id;
     businessUser = authFor(bUser.id, UserRole.business);
 
+    const buyerAccount = await prisma.user.create({
+      data: {
+        clerkUserId: `clerk_buyer_${RUN}`,
+        email: `buyer-acc-${RUN}@test.example`,
+        role: UserRole.buyer,
+      },
+    });
     const buyer = await prisma.buyer.create({
       data: {
+        userId: buyerAccount.id,
         legalName: 'Debtor Co',
         contactEmail: `debtor-${RUN}@test.example`,
       },
     });
     buyerId = buyer.id;
+    buyerUser = authFor(buyerAccount.id, UserRole.buyer);
 
     ({ user: investorUser, investorId } = await makeInvestor(
       'main',
@@ -134,6 +148,8 @@ describe('Investor + fund flow (e2e)', () => {
     ));
     ({ user: pendingInvestorUser, investorId: pendingInvestorId } =
       await makeInvestor('pending', WhitelistStatus.identity_submitted, 0));
+    ({ user: repayInvestorUser, investorId: repayInvestorId } =
+      await makeInvestor('repay', WhitelistStatus.whitelisted, 200_000));
   });
 
   afterAll(async () => {
@@ -455,6 +471,49 @@ describe('Investor + fund flow (e2e)', () => {
           identityDocumentKey: foreign.objectKey,
         })
         .expect(400);
+    });
+  });
+
+  describe('repayment fan-out', () => {
+    it('buyer pays a fully-funded invoice → each holder gets principal + the reference', async () => {
+      const invoiceId = await createTokenizedInvoice(
+        `INV-REPAY-${RUN}`,
+        80_000,
+      );
+
+      currentUser = repayInvestorUser;
+      await request(httpServer)
+        .post(`/investor/marketplace/${invoiceId}/fund`)
+        .send({ amount: 80_000 })
+        .expect(201);
+
+      currentUser = buyerUser;
+      await request(httpServer)
+        .post(`/buyer/invoices/${invoiceId}/pay`)
+        .send({ amount: 80_000, paymentReference: 'BANK-REF-XYZ' })
+        .expect(201);
+
+      const invoice = await prisma.invoice.findUniqueOrThrow({
+        where: { id: invoiceId },
+      });
+      expect(invoice.status).toBe(InvoiceStatus.repaid);
+
+      const holding = await prisma.holding.findUniqueOrThrow({
+        where: {
+          investorId_invoiceId: { investorId: repayInvestorId, invoiceId },
+        },
+      });
+      expect(Number(holding.repaidAmount)).toBe(80_000);
+
+      const repayment = await prisma.walletTransaction.findFirstOrThrow({
+        where: {
+          invoiceId,
+          investorId: repayInvestorId,
+          type: WalletTransactionType.repayment,
+        },
+      });
+      expect(Number(repayment.amount)).toBe(80_000);
+      expect(repayment.description).toBe('BANK-REF-XYZ');
     });
   });
 

@@ -1,5 +1,11 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsNumber, IsPositive } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsNumber,
+  IsOptional,
+  IsPositive,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 /**
  * Body for POST /buyer/invoices/:id/pay — a buyer recording a repayment on an
@@ -10,4 +16,13 @@ export class PayInvoiceDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @IsPositive()
   amount!: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Buyer-side payment reference / memo. Stored on the description of each repayment ledger entry created for the invoice’s investors.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(140)
+  paymentReference?: string;
 }

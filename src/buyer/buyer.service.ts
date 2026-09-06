@@ -9,7 +9,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import type { AuthUser } from '../auth/auth-user.type';
-import { InvoiceStatus } from '../common/enums';
+import { InvoiceStatus, WalletTransactionType } from '../common/enums';
 import type { Buyer } from '../generated/prisma/client';
 import type { ListInvoicesQueryDto } from './dto/list-invoices.query.dto';
 import type { PayInvoiceDto } from './dto/pay-invoice.dto';
@@ -102,12 +102,34 @@ export class BuyerService {
       );
     }
 
-    // Not fanning the repayment out to investor holdings / wallets: the
-    // Investor module isn't built, so there are no holdings to credit —
-    // see docs/RAIQUID_CONTEXT.md.
-    return this.prisma.invoice.update({
-      where: { id: invoice.id },
-      data: { status: InvoiceStatus.repaid },
+    return this.prisma.$transaction(async (tx) => {
+      const holdings = await tx.holding.findMany({
+        where: { invoiceId: invoice.id },
+      });
+
+      // Principal only. Each holder gets back exactly what they put in
+      // (holding.amount) — no return/yield, because there's no rate field
+      // on Invoice to compute one from (see docs/RAIQUID_CONTEXT.md).
+      for (const h of holdings) {
+        await tx.walletTransaction.create({
+          data: {
+            type: WalletTransactionType.repayment,
+            amount: h.amount,
+            description: dto.paymentReference,
+            investorId: h.investorId,
+            invoiceId: invoice.id,
+          },
+        });
+        await tx.holding.update({
+          where: { id: h.id },
+          data: { repaidAmount: h.amount },
+        });
+      }
+
+      return tx.invoice.update({
+        where: { id: invoice.id },
+        data: { status: InvoiceStatus.repaid },
+      });
     });
   }
 
