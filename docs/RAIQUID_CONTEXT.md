@@ -5,10 +5,10 @@ learned from the frontend that affect future backend work.
 
 ## Open decisions
 
-- **Investor funding minimum.** The frontend's investor screens enforce a
-  hard minimum of ₦5,000 per investment. Nothing in this API enforces it yet.
-  When the Investor module (`POST /investor/marketplace/:id/fund`) is
-  implemented for real, add `@Min(5000)` to `FundInvoiceDto.amount`.
+- **Investor funding minimum — enforced.** The ₦5,000 per-investment floor
+  from the frontend screens is now `@Min(5000)` on `FundInvoiceDto.amount`.
+  This is the only confirmed constant on that screen; if product later adds
+  a per-tier or per-invoice minimum, it goes here too.
 
 - **Investor fee model is unmodeled.** Investors are charged a fee taken out
   of their *return* on a funded invoice — a different concept from
@@ -50,15 +50,53 @@ learned from the frontend that affect future backend work.
   product-defined formula before wiring up.
 
 - **Invoice repayment doesn't reach investors.** `POST /buyer/invoices/:id/pay`
-  moves a `funded` / `overdue` invoice straight to `repaid`. It does not
-  distribute the repayment to `Holding` rows or investor wallets, because
-  the Investor module isn't built and no holdings meaningfully exist yet.
-  Blocked on Investor funding being implemented.
+  moves a `funded` / `overdue` invoice straight to `repaid`. `Holding` rows
+  now exist (created by investor funding), so the fan-out target is there —
+  but the distribution logic (credit each holder's wallet pro rata, minus
+  the investor return fee, set `Holding.repaidAmount`) still isn't written.
+  Needs the investor return-fee decision above resolved first.
 
 - **Partial invoice payments aren't supported.** `payInvoice` requires
   `dto.amount` to exactly equal `Invoice.amount`; a mismatch is a 400.
   There's no field on `Invoice` tracking a running paid balance, and
   adding one is a schema change (cross-repo coordination point).
+
+- **Marketplace browsing is open; funding is whitelist-gated.**
+  `GET /investor/marketplace` and `/marketplace/:id` only require an
+  Investor profile — not a `whitelisted` status — matching the frontend,
+  where the marketplace is always visible. `POST /marketplace/:id/fund`
+  rejects (403) unless `whitelistStatus === whitelisted`. Recording this
+  because it's a deliberate asymmetry, not an oversight.
+
+- **No investor deposit endpoint.** `GET /investor/wallet` exists, but
+  there is no `POST` anywhere in this API for an investor to add funds to
+  their wallet. A real investor's balance is therefore always 0, so
+  `fundInvoice`'s balance check can never pass in production. The e2e
+  tests seed a `deposit` `WalletTransaction` directly via Prisma to work
+  around this. Needs a deposit flow (its own endpoint, or an off-platform
+  payment webhook) before funding works end to end.
+
+- **`Holding.tokenUnits` is a placeholder.** On funding, `tokenUnits` is
+  set equal to the invested `amount`. Real on-chain unit accounting (how
+  many invoice tokens a given ₦ amount buys) comes from the separate
+  minting service, which doesn't exist here. Once it does, `tokenUnits`
+  should be populated from the actual mint/transfer event, not mirrored
+  from the fiat amount.
+
+- **KYC documents submitted for whitelisting aren't stored.**
+  `SubmitWhitelistingDto` carries `identityDocumentKey` /
+  `proofOfAddressKey` (R2 object keys), but the `Investor` model has no
+  field for them, so `submitWhitelisting` drops them. A real KYC review
+  needs these persisted — a schema change (fields on `Investor`, or a
+  dedicated `KycSubmission` model).
+
+- **Concurrent funding of the same invoice has a race window.**
+  `fundInvoice` reads the invoice, checks `remaining >= amount`, then
+  writes in a transaction using an atomic `increment` on `fundedAmount`.
+  Two funds landing between the check and the write could together
+  over-fund past the invoice amount. Low stakes at current volume;
+  a `SELECT ... FOR UPDATE` (raw SQL) on the invoice inside the
+  transaction would close it.
 
 ## Accepted npm audit findings
 

@@ -11,21 +11,13 @@ import type { Env } from '../config/env.validation';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import type { AuthUser } from '../auth/auth-user.type';
-import { WalletTransactionType } from '../common/enums';
 import { isUniqueConstraintError } from '../common/prisma-errors';
+import { walletBalance } from '../common/wallet-balance';
 import type { Business } from '../generated/prisma/client';
 import { PROVENANCE_FEE_SCHEDULE } from './provenance-fee-schedule';
 import type { CreateInvoiceDto } from './dto/create-invoice.dto';
 import type { ListInvoicesQueryDto } from './dto/list-invoices.query.dto';
 import type { UpdateBusinessSettingsDto } from './dto/update-business-settings.dto';
-
-// Business-wallet sign convention: money in = credit, money out = debit.
-// `invested`/`repayment` mainly apply to investor wallets, but the type is
-// shared, so this stays defined for both rather than special-cased per owner.
-const CREDIT_TYPES = new Set<WalletTransactionType>([
-  WalletTransactionType.deposit,
-  WalletTransactionType.repayment,
-]);
 
 /** Business area — the supplier-facing dashboard (/business/*). */
 @Injectable()
@@ -146,12 +138,11 @@ export class BusinessService {
       orderBy: { createdAt: 'desc' },
     });
 
-    const balance = transactions.reduce((sum, t) => {
-      const amount = Number(t.amount);
-      return CREDIT_TYPES.has(t.type) ? sum + amount : sum - amount;
-    }, 0);
-
-    return { balance, currency: 'NGN', transactions };
+    return {
+      balance: walletBalance(transactions),
+      currency: 'NGN',
+      transactions,
+    };
   }
 
   async getSettings(user: AuthUser) {

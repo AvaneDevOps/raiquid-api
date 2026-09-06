@@ -56,8 +56,11 @@ export class InvestorController {
 
   @Get('portfolio')
   @ApiOperation({ summary: "List this investor's holdings" })
-  getPortfolio(@CurrentUser() user: AuthUser) {
-    return this.investor.getPortfolio(user);
+  getPortfolio(
+    @CurrentUser() user: AuthUser,
+    @Query() query: PaginationQueryDto,
+  ) {
+    return this.investor.getPortfolio(user, query);
   }
 
   @Get('portfolio/:id')

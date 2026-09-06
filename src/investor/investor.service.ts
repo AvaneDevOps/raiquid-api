@@ -1,89 +1,262 @@
-import { Injectable, NotImplementedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../auth/auth-user.type';
 import type { PaginationQueryDto } from '../common/dto/pagination-query.dto';
+import {
+  InvoiceStatus,
+  WalletTransactionType,
+  WhitelistStatus,
+} from '../common/enums';
+import { walletBalance } from '../common/wallet-balance';
+import type { Investor } from '../generated/prisma/client';
 import type { FundInvoiceDto } from './dto/fund-invoice.dto';
 import type { SubmitWhitelistingDto } from './dto/submit-whitelisting.dto';
 import type { UpdateInvestorSettingsDto } from './dto/update-investor-settings.dto';
 
-/**
- * Investor area — the funder-facing dashboard (/investor/*).
- *
- * All method bodies are stubs per the project-structure scope.
- */
+// Statuses that mean "open for investment".
+const OPEN_FOR_INVESTMENT: InvoiceStatus[] = [
+  InvoiceStatus.tokenized,
+  InvoiceStatus.funding,
+];
+
+/** Investor area — the funder-facing dashboard (/investor/*). */
 @Injectable()
 export class InvestorService {
-  /** GET /investor/marketplace — frontend: /investor/marketplace. */
-  listMarketplace(
-    _user: AuthUser,
-    _query: PaginationQueryDto,
-  ): Promise<unknown> {
-    // TODO: implement. Invoices in `funding` status open for investment.
-    throw new NotImplementedException();
+  constructor(private readonly prisma: PrismaService) {}
+
+  async listMarketplace(user: AuthUser, query: PaginationQueryDto) {
+    // Browsing only needs an investor account, not a whitelisted one —
+    // the frontend keeps the marketplace open, only funding is gated.
+    await this.getInvestorForUser(user);
+    const where = { status: { in: OPEN_FOR_INVESTMENT } };
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.invoice.findMany({
+        where,
+        include: { buyer: true },
+        orderBy: { createdAt: 'desc' },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.prisma.invoice.count({ where }),
+    ]);
+
+    return { data, page: query.page, pageSize: query.pageSize, total };
   }
 
-  /** GET /investor/marketplace/:id — frontend: /investor/marketplace/[id]. */
-  getMarketplaceListing(_user: AuthUser, _id: string): Promise<unknown> {
-    // TODO: implement. One listing with buyer provenance, economics, progress.
-    throw new NotImplementedException();
+  async getMarketplaceListing(user: AuthUser, id: string) {
+    await this.getInvestorForUser(user);
+    const invoice = await this.prisma.invoice.findFirst({
+      where: { id, status: { in: OPEN_FOR_INVESTMENT } },
+      include: { buyer: true, business: true },
+    });
+    if (!invoice) {
+      throw new NotFoundException('Listing not found');
+    }
+    return invoice;
   }
 
-  /** POST /investor/marketplace/:id/fund — frontend: /investor/marketplace/[id]. */
-  fundInvoice(
-    _user: AuthUser,
-    _invoiceId: string,
-    _dto: FundInvoiceDto,
-  ): Promise<unknown> {
-    // TODO: implement. Check whitelist + wallet balance, create Holding,
-    // debit wallet, bump Invoice.fundedAmount, trigger on-chain transfer.
-    throw new NotImplementedException();
+  async fundInvoice(user: AuthUser, invoiceId: string, dto: FundInvoiceDto) {
+    const investor = await this.getInvestorForUser(user);
+    if (investor.whitelistStatus !== WhitelistStatus.whitelisted) {
+      throw new ForbiddenException(
+        'Funding requires a whitelisted investor account',
+      );
+    }
+
+    const invoice = await this.prisma.invoice.findUnique({
+      where: { id: invoiceId },
+    });
+    if (!invoice) {
+      throw new NotFoundException('Invoice not found');
+    }
+    if (!OPEN_FOR_INVESTMENT.includes(invoice.status)) {
+      throw new ConflictException(
+        `Invoice is not open for investment (status "${invoice.status}")`,
+      );
+    }
+
+    const remaining = invoice.amount.sub(invoice.fundedAmount);
+    if (remaining.lt(dto.amount)) {
+      throw new BadRequestException(
+        `Amount exceeds the invoice's remaining unfunded balance (${remaining.toString()})`,
+      );
+    }
+
+    const balance = walletBalance(
+      await this.prisma.walletTransaction.findMany({
+        where: { investorId: investor.id },
+        select: { type: true, amount: true },
+      }),
+    );
+    if (balance < dto.amount) {
+      throw new BadRequestException(
+        `Insufficient wallet balance (${balance}) for this investment`,
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // One Holding per (investor, invoice) — accumulate on repeat funding.
+      // tokenUnits mirrors the invested amount as a placeholder; real
+      // on-chain unit accounting needs the separate minting service
+      // (see docs/RAIQUID_CONTEXT.md).
+      await tx.holding.upsert({
+        where: {
+          investorId_invoiceId: {
+            investorId: investor.id,
+            invoiceId: invoice.id,
+          },
+        },
+        create: {
+          investorId: investor.id,
+          invoiceId: invoice.id,
+          amount: dto.amount,
+          tokenUnits: dto.amount,
+        },
+        update: {
+          amount: { increment: dto.amount },
+          tokenUnits: { increment: dto.amount },
+        },
+      });
+
+      await tx.walletTransaction.create({
+        data: {
+          type: WalletTransactionType.invested,
+          amount: dto.amount,
+          investorId: investor.id,
+          invoiceId: invoice.id,
+        },
+      });
+
+      const incremented = await tx.invoice.update({
+        where: { id: invoice.id },
+        data: { fundedAmount: { increment: dto.amount } },
+      });
+      const fullyFunded = incremented.fundedAmount.gte(incremented.amount);
+
+      const finalInvoice = await tx.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          status: fullyFunded ? InvoiceStatus.funded : InvoiceStatus.funding,
+        },
+        include: { buyer: true },
+      });
+
+      if (fullyFunded) {
+        const totalFeePct = invoice.platformFeePct.add(
+          invoice.reserveContributionPct,
+        );
+        const feeAmount = invoice.amount.mul(totalFeePct).div(100);
+        const netPayout = invoice.amount.sub(feeAmount);
+        await tx.walletTransaction.create({
+          data: {
+            type: WalletTransactionType.deposit,
+            amount: netPayout,
+            businessId: invoice.businessId,
+            invoiceId: invoice.id,
+          },
+        });
+      }
+
+      return finalInvoice;
+    });
   }
 
-  /** GET /investor/portfolio — frontend: /investor/portfolio. */
-  getPortfolio(_user: AuthUser): Promise<unknown> {
-    // TODO: implement. This investor's holdings with valuation + returns.
-    throw new NotImplementedException();
+  async getPortfolio(user: AuthUser, query: PaginationQueryDto) {
+    const investor = await this.getInvestorForUser(user);
+    const where = { investorId: investor.id };
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.holding.findMany({
+        where,
+        include: { invoice: true },
+        orderBy: { acquiredAt: 'desc' },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.prisma.holding.count({ where }),
+    ]);
+
+    return { data, page: query.page, pageSize: query.pageSize, total };
   }
 
-  /** GET /investor/portfolio/:id — frontend: /investor/portfolio/[id]. */
-  getPortfolioHolding(_user: AuthUser, _id: string): Promise<unknown> {
-    // TODO: implement. One holding with the underlying invoice + repayment state.
-    throw new NotImplementedException();
+  async getPortfolioHolding(user: AuthUser, id: string) {
+    const investor = await this.getInvestorForUser(user);
+    const holding = await this.prisma.holding.findFirst({
+      where: { id, investorId: investor.id },
+      include: { invoice: true },
+    });
+    if (!holding) {
+      throw new NotFoundException('Holding not found');
+    }
+    return holding;
   }
 
-  /** GET /investor/whitelisting — frontend: /investor/whitelisting. */
-  getWhitelisting(_user: AuthUser): Promise<unknown> {
-    // TODO: implement. Current WhitelistStatus + submitted details.
-    throw new NotImplementedException();
+  async getWhitelisting(user: AuthUser) {
+    const investor = await this.getInvestorForUser(user);
+    return {
+      whitelistStatus: investor.whitelistStatus,
+      countryOfResidence: investor.countryOfResidence,
+      displayName: investor.displayName,
+    };
   }
 
-  /** POST /investor/whitelisting — frontend: /investor/whitelisting. */
-  submitWhitelisting(
-    _user: AuthUser,
-    _dto: SubmitWhitelistingDto,
-  ): Promise<unknown> {
-    // TODO: implement. Persist details, move status to `identity_submitted` ->
-    // `in_review`, notify admins.
-    throw new NotImplementedException();
+  async submitWhitelisting(user: AuthUser, dto: SubmitWhitelistingDto) {
+    const investor = await this.getInvestorForUser(user);
+    // No admin notification: there's no admin contact list or notification
+    // target defined anywhere yet. The DTO's KYC document keys also have
+    // nowhere to be stored without a schema change (see docs/RAIQUID_CONTEXT.md).
+    return this.prisma.investor.update({
+      where: { id: investor.id },
+      data: {
+        countryOfResidence: dto.countryOfResidence,
+        displayName: dto.legalName,
+        whitelistStatus: WhitelistStatus.in_review,
+      },
+    });
   }
 
-  /** GET /investor/wallet — frontend: /investor/wallet. */
-  getWallet(_user: AuthUser): Promise<unknown> {
-    // TODO: implement. Balance + WalletTransaction history for this investor.
-    throw new NotImplementedException();
+  async getWallet(user: AuthUser) {
+    const investor = await this.getInvestorForUser(user);
+    const transactions = await this.prisma.walletTransaction.findMany({
+      where: { investorId: investor.id },
+      orderBy: { createdAt: 'desc' },
+    });
+    return {
+      balance: walletBalance(transactions),
+      currency: 'NGN',
+      transactions,
+    };
   }
 
-  /** GET /investor/settings — frontend: /investor/settings. */
-  getSettings(_user: AuthUser): Promise<unknown> {
-    // TODO: implement.
-    throw new NotImplementedException();
+  async getSettings(user: AuthUser) {
+    return this.getInvestorForUser(user);
   }
 
-  /** PATCH /investor/settings — frontend: /investor/settings. */
-  updateSettings(
-    _user: AuthUser,
-    _dto: UpdateInvestorSettingsDto,
-  ): Promise<unknown> {
-    // TODO: implement.
-    throw new NotImplementedException();
+  async updateSettings(user: AuthUser, dto: UpdateInvestorSettingsDto) {
+    const investor = await this.getInvestorForUser(user);
+    return this.prisma.investor.update({
+      where: { id: investor.id },
+      data: { ...dto },
+    });
+  }
+
+  private async getInvestorForUser(user: AuthUser): Promise<Investor> {
+    if (!user.dbUserId) {
+      throw new ForbiddenException('User is not provisioned yet');
+    }
+    const investor = await this.prisma.investor.findUnique({
+      where: { userId: user.dbUserId },
+    });
+    if (!investor) {
+      throw new NotFoundException('Investor profile not found');
+    }
+    return investor;
   }
 }
