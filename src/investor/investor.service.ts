@@ -8,11 +8,13 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import type { AuthUser } from '../auth/auth-user.type';
 import type { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import {
   InvoiceStatus,
   KycDocumentType,
+  NotificationTone,
   WalletTransactionType,
   WhitelistStatus,
 } from '../common/enums';
@@ -35,6 +37,7 @@ export class InvestorService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async listMarketplace(user: AuthUser, query: PaginationQueryDto) {
@@ -79,6 +82,7 @@ export class InvestorService {
 
     const invoice = await this.prisma.invoice.findUnique({
       where: { id: invoiceId },
+      include: { business: true },
     });
     if (!invoice) {
       throw new NotFoundException('Invoice not found');
@@ -169,6 +173,16 @@ export class InvestorService {
             invoiceId: invoice.id,
           },
         });
+        await this.notifications.notify(
+          {
+            userId: invoice.business.userId,
+            tone: NotificationTone.positive,
+            title: `Invoice ${invoice.invoiceNumber} fully funded`,
+            body: `Invoice ${invoice.invoiceNumber} is fully funded. A net payout of ${invoice.currency} ${netPayout.toString()} has been credited to your wallet.`,
+            href: `/business/invoices/${invoice.id}`,
+          },
+          tx,
+        );
       }
 
       return finalInvoice;

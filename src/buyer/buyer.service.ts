@@ -8,8 +8,13 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import type { AuthUser } from '../auth/auth-user.type';
-import { InvoiceStatus, WalletTransactionType } from '../common/enums';
+import {
+  InvoiceStatus,
+  NotificationTone,
+  WalletTransactionType,
+} from '../common/enums';
 import type { Buyer } from '../generated/prisma/client';
 import type { ListInvoicesQueryDto } from './dto/list-invoices.query.dto';
 import type { PayInvoiceDto } from './dto/pay-invoice.dto';
@@ -27,6 +32,7 @@ export class BuyerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly email: EmailService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // --- authenticated buyer endpoints ---
@@ -105,6 +111,7 @@ export class BuyerService {
     return this.prisma.$transaction(async (tx) => {
       const holdings = await tx.holding.findMany({
         where: { invoiceId: invoice.id },
+        include: { investor: true },
       });
 
       // Principal only. Each holder gets back exactly what they put in
@@ -124,6 +131,16 @@ export class BuyerService {
           where: { id: h.id },
           data: { repaidAmount: h.amount },
         });
+        await this.notifications.notify(
+          {
+            userId: h.investor.userId,
+            tone: NotificationTone.positive,
+            title: `Invoice ${invoice.invoiceNumber} repaid`,
+            body: `Your ${invoice.currency} ${h.amount.toString()} stake in invoice ${invoice.invoiceNumber} has been repaid.`,
+            href: `/investor/portfolio/${h.id}`,
+          },
+          tx,
+        );
       }
 
       return tx.invoice.update({
@@ -165,13 +182,29 @@ export class BuyerService {
     const businessEmail =
       invoice.business.contactEmail ?? invoice.business.user.email;
 
+    const noteSuffix = dto.note ? ` Buyer's note: ${dto.note}` : '';
+
     if (dto.accept) {
-      const updated = await this.prisma.invoice.update({
-        where: { id: invoice.id },
-        data: { status: InvoiceStatus.tokenized, confirmedAt: new Date() },
+      // The status change and the in-app notification are one outcome, so
+      // write them together. A failed notification *email* still shouldn't
+      // undo it or fail the request — that stays best-effort below.
+      const updated = await this.prisma.$transaction(async (tx) => {
+        const inv = await tx.invoice.update({
+          where: { id: invoice.id },
+          data: { status: InvoiceStatus.tokenized, confirmedAt: new Date() },
+        });
+        await this.notifications.notify(
+          {
+            userId: invoice.business.userId,
+            tone: NotificationTone.positive,
+            title: `Invoice ${invoice.invoiceNumber} accepted`,
+            body: `The buyer accepted invoice ${invoice.invoiceNumber}; it is now tokenized and open for funding.${noteSuffix}`,
+            href: `/business/invoices/${invoice.id}`,
+          },
+          tx,
+        );
+        return inv;
       });
-      // Status change is the durable outcome; a failed notification email
-      // shouldn't undo it or fail the request.
       try {
         await this.email.sendBuyerReviewOutcome(businessEmail, {
           invoiceNumber: invoice.invoiceNumber,
@@ -190,6 +223,13 @@ export class BuyerService {
     // value, and inventing one backend-only would diverge the shared contract
     // (see docs/RAIQUID_CONTEXT.md). The notification IS the whole outcome
     // here, so a send failure propagates rather than being swallowed.
+    await this.notifications.notify({
+      userId: invoice.business.userId,
+      tone: NotificationTone.warning,
+      title: `Invoice ${invoice.invoiceNumber} disputed`,
+      body: `The buyer disputed invoice ${invoice.invoiceNumber}.${noteSuffix}`,
+      href: `/business/invoices/${invoice.id}`,
+    });
     await this.email.sendBuyerReviewOutcome(businessEmail, {
       invoiceNumber: invoice.invoiceNumber,
       accepted: false,

@@ -187,6 +187,22 @@ opaque confirm token.
 | ------ | ---------------- | -------------------------------- |
 | GET    | `/notifications` | notifications tray (all layouts) |
 
+`GET /notifications` returns the caller's own rows newest-first, paginated
+(`page`, `pageSize`, `unreadOnly`), plus a top-level `unreadCount`. Rows are
+written by domain events — no endpoint creates them directly:
+
+| Event | Recipient | Tone |
+| ----- | --------- | ---- |
+| Buyer accepts an invoice (`POST /confirm/:id/review`) | invoice's business owner | positive |
+| Buyer disputes an invoice | invoice's business owner | warning |
+| Invoice becomes fully funded (`POST /investor/marketplace/:id/fund`) | invoice's business owner | positive |
+| Invoice repaid (`POST /buyer/invoices/:id/pay`) | every investor holding a stake | positive |
+| Whitelisting approved / rejected (`POST /admin/whitelisting/:id/decision`) | the investor | positive / warning |
+
+Each notification is written in the same transaction as the state change that
+triggered it. The matching email (where one exists) stays best-effort — a
+failed send is logged, not rolled back.
+
 ## Conventions
 
 - **No dead DTO fields.** A request-DTO field that no service method actually

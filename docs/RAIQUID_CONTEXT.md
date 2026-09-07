@@ -121,6 +121,30 @@ learned from the frontend that affect future backend work.
   a `SELECT ... FOR UPDATE` (raw SQL) on the invoice inside the
   transaction would close it.
 
+- **`WhitelistStatus` has no `rejected` state.** `POST /admin/whitelisting/:id/decision`
+  with `approve: false` moves the investor back to `identity_submitted` — the
+  same enum value as "submitted but never reviewed". The enum mirrors the
+  frontend's shared type, so adding `rejected` is a cross-repo contract change,
+  not a backend-only call (same reasoning as the invoice decline state above).
+  Consequence until then: a rejected investor is indistinguishable from a
+  fresh submitter apart from the warning notification they receive, and the
+  admin queue (`whitelistStatus != whitelisted`) shows them again immediately.
+  No audit trail records who decided what or when.
+
+- **In-app notifications are wired; `Notification.readAt` has no writer.**
+  Domain events now drop `Notification` rows (see the README table).
+  `GET /notifications` reads them and reports `unreadCount`, but there is **no
+  endpoint to mark one read** — `readAt` stays null forever, so `unreadCount`
+  only grows. The frontend tray needs a `PATCH /notifications/:id` (or a
+  bulk mark-all) before "unread" means anything. Deferred because the frontend
+  contract for that isn't pinned down yet.
+
+- **Only *full* funding notifies the business.** `fundInvoice` posts a
+  notification when the invoice crosses to `funded`, not on each partial
+  funding — otherwise a thinly-sliced raise would spam the supplier. If
+  product wants "you've received a partial funding of ₦X" updates, that's a
+  separate, opt-in notification.
+
 ## Accepted npm audit findings
 
 `npm audit` reports 4 high-severity findings (`mysql2`, `deepmerge-ts`).
