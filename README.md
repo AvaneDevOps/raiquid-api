@@ -63,19 +63,31 @@ npm run start:dev
 | `npm run lint`            | ESLint (`--fix`)                          |
 | `npm test`                | Jest unit tests                           |
 | `npm run test:e2e`        | Jest e2e tests against a real Postgres (see below) |
+| `npm run test:e2e:db:up` / `test:e2e:db:down` | Start / tear down the throwaway e2e Postgres by hand |
 | `npm run prisma:migrate`  | `prisma migrate dev`                      |
 | `npm run prisma:studio`   | Prisma Studio                             |
 | `npm run db:up` / `db:down` | Start/stop the Postgres container       |
 
 ### e2e tests
 
-`npm run test:e2e` boots the real `AppModule` against a real Postgres — point
-`DATABASE_URL` at a migrated database (the default in `test/setup-env.ts` is a
-throwaway container on `localhost:5544`, override it via env if you use a
-different one). It overrides `ClerkAuthGuard` and `EmailService` so no real
-Clerk session or Resend call is needed. The script runs Jest under
-`--experimental-vm-modules`: Prisma 7's driver-adapter query compiler loads
-itself via a dynamic `import()`, which Jest only supports with that flag.
+`npm run test:e2e` boots the real `AppModule` against a real Postgres. A
+`pretest:e2e` hook runs `scripts/e2e-db.mjs up`, which starts the throwaway
+database defined in [`docker-compose.e2e.yml`](docker-compose.e2e.yml)
+(`raiquid-e2e-pg`, `localhost:5544`, matching the default `DATABASE_URL` in
+`test/setup-env.ts`) and applies migrations with `prisma migrate deploy`. Point
+`DATABASE_URL` at a different migrated database via env if you'd rather. The run
+overrides `ClerkAuthGuard` and `EmailService` so no real Clerk session or
+Resend call is needed. The script runs Jest under `--experimental-vm-modules`:
+Prisma 7's driver-adapter query compiler loads itself via a dynamic `import()`,
+which Jest only supports with that flag.
+
+The e2e container's data directory is a **tmpfs** (RAM, wiped on stop), and
+`npm run test:e2e:db:down` — like every teardown of a throwaway container in
+this repo — passes `docker compose down -v`. Never tear an e2e database down
+with a bare `docker rm -f` / `docker compose down`: that orphans the data
+volume, and enough of those will fill the disk. The container is left running
+between test runs on purpose (faster iteration); run `test:e2e:db:down` when
+you're finished.
 
 The script also passes `--runInBand`. Every spec generates unique fixture
 ids per run (`randomUUID()`), so parallel workers won't collide on

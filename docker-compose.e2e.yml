@@ -1,0 +1,27 @@
+# Throwaway Postgres for `npm run test:e2e`. Kept separate from
+# docker-compose.yml (the dev database) so the two can run side by side and so
+# tearing this one down never touches dev data.
+#
+# The data directory is a tmpfs: it lives in RAM, never lands on disk, and is
+# gone the moment the container stops. That is the whole point — earlier e2e
+# runs used `docker run` + `docker rm -f` (no `-v`), which orphaned one
+# anonymous postgres volume per run until the disk filled. With a tmpfs there
+# is no volume to leak. `npm run test:e2e:db:down` still passes `-v` anyway, so
+# the safe pattern holds even if this file later grows a named volume.
+services:
+  postgres-e2e:
+    image: postgres:17
+    container_name: raiquid-e2e-pg
+    environment:
+      POSTGRES_USER: raiquid
+      POSTGRES_PASSWORD: raiquid
+      POSTGRES_DB: raiquid
+    ports:
+      - '5544:5432'
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U raiquid -d raiquid']
+      interval: 3s
+      timeout: 3s
+      retries: 20
