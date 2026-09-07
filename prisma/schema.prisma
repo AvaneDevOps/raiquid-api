@@ -12,6 +12,12 @@
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
+  // Pin the output shape so it doesn't depend on tsconfig.json being present
+  // at generate time (it isn't, in the Docker build's dependency layer). The
+  // app is CommonJS and compiled by tsc; emit CJS with .js import specifiers
+  // that the compiled dist/ can resolve at runtime.
+  moduleFormat        = "cjs"
+  importFileExtension = "js"
 }
 
 // Prisma 7: the connection URL lives in prisma.config.ts, not here.

@@ -111,6 +111,28 @@ the process exits if any is missing or malformed. See
 > opens its own connection through the `@prisma/adapter-pg` driver adapter in
 > [`src/prisma/prisma.service.ts`](src/prisma/prisma.service.ts).
 
+## Docker
+
+[`Dockerfile`](Dockerfile) is a two-stage build (`node:22-slim`): stage one
+runs `npm ci` (+ `prisma generate`) and `nest build`; stage two carries only
+the pruned production `node_modules`, `dist/`, and `package.json`, and runs as
+the non-root `node` user. `CMD` is `node dist/main` (the same as
+`npm run start:prod`).
+
+```bash
+docker build -t raiquid-api .
+docker run --rm -p 3000:3000 --env-file .env raiquid-api
+# GET /health -> 200 once the DB in DATABASE_URL is reachable
+```
+
+The image runs no migrations — apply them from a machine that has the `prisma`
+CLI (`DATABASE_URL=… npx prisma migrate deploy`) before rolling out.
+
+The Prisma generator block in `schema.prisma` pins `moduleFormat = "cjs"` /
+`importFileExtension = "js"` so the generated client compiles to runnable
+CommonJS even though `prisma generate` runs in the Docker layer before
+`tsconfig.json` is copied in.
+
 ## Routes
 
 Base paths line up 1:1 with the frontend route groups, so a frontend screen at

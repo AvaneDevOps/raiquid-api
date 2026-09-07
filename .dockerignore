@@ -1,0 +1,17 @@
+node_modules
+dist
+coverage
+.git
+.github
+.husky
+test
+*.log
+.env
+.env.*
+!.env.example
+src/generated
+Dockerfile
+.dockerignore
+docker-compose*.yml
+README.md
+docs
