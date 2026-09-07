@@ -5,6 +5,7 @@ import { Logger } from 'nestjs-pino';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 import type { Env } from './config/env.validation';
+import { configureCors } from './config/cors.config';
 
 async function bootstrap(): Promise<void> {
   // rawBody: true exposes req.rawBody, needed by the Clerk webhook route to
@@ -18,6 +19,8 @@ async function bootstrap(): Promise<void> {
   app.useLogger(app.get(Logger));
 
   const config = app.get<ConfigService<Env, true>>(ConfigService);
+
+  configureCors(app, config);
 
   // Swagger / OpenAPI, served at /docs.
   const swaggerConfig = new DocumentBuilder()
