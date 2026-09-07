@@ -1,9 +1,11 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../auth/roles.decorator';
 import { UserRole } from '../common/enums';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import { AdminService } from './admin.service';
 import { LedgerQueryDto } from './dto/ledger-query.dto';
+import { WhitelistDecisionDto } from './dto/whitelist-decision.dto';
 
 /**
  * Platform-operator routes. Base path `/admin` matches the frontend's /admin/*
@@ -39,5 +41,20 @@ export class AdminController {
   @ApiOperation({ summary: 'On-chain event ledger (mirror table)' })
   getLedger(@Query() query: LedgerQueryDto) {
     return this.admin.getLedger(query);
+  }
+
+  @Get('whitelisting')
+  @ApiOperation({ summary: 'Investor whitelisting review queue' })
+  listWhitelistingQueue(@Query() query: PaginationQueryDto) {
+    return this.admin.listWhitelistingQueue(query);
+  }
+
+  @Post('whitelisting/:investorId/decision')
+  @ApiOperation({ summary: 'Approve or reject an investor whitelisting' })
+  decideWhitelisting(
+    @Param('investorId') investorId: string,
+    @Body() dto: WhitelistDecisionDto,
+  ) {
+    return this.admin.decideWhitelisting(investorId, dto);
   }
 }

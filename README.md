@@ -180,6 +180,8 @@ opaque confirm token.
 | GET    | `/admin/reserve`    | `/admin/reserve`     |
 | GET    | `/admin/provenance` | `/admin/provenance`  |
 | GET    | `/admin/ledger`     | `/admin/ledger` (reads the `OnChainEvent` mirror table) |
+| GET    | `/admin/whitelisting` | `/admin/whitelisting` review queue (investors not yet whitelisted, with KYC docs) |
+| POST   | `/admin/whitelisting/:investorId/decision` | approve / reject an investor whitelisting (`{ approve, note? }`) |
 
 ### Notifications
 

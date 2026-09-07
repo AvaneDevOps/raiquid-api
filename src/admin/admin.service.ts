@@ -1,12 +1,22 @@
-import { Injectable } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { EmailService } from '../email/email.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   InvoiceStatus,
+  NotificationTone,
   ProvenanceTier,
   WhitelistStatus,
 } from '../common/enums';
 import { Prisma } from '../generated/prisma/client';
+import type { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import type { LedgerQueryDto } from './dto/ledger-query.dto';
+import type { WhitelistDecisionDto } from './dto/whitelist-decision.dto';
 
 /** Truncate a Date to its UTC calendar day (ms since epoch). */
 function utcDay(d: Date): number {
@@ -34,7 +44,13 @@ const RESERVE_COLLECTED: InvoiceStatus[] = [
  */
 @Injectable()
 export class AdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(AdminService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly email: EmailService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   async getOverview() {
     const [financed, activeInvoices, repaid, activeInvestors] =
@@ -165,5 +181,98 @@ export class AdminService {
     ]);
 
     return { data, page: query.page, pageSize: query.pageSize, total };
+  }
+
+  /**
+   * The whitelisting review queue — investors who have submitted for review but
+   * are not yet cleared to fund. Each row carries the account email and the KYC
+   * document pointers the operator needs to make a decision.
+   */
+  async listWhitelistingQueue(query: PaginationQueryDto) {
+    const where = {
+      whitelistStatus: { not: WhitelistStatus.whitelisted },
+    };
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.investor.findMany({
+        where,
+        include: {
+          user: { select: { email: true, firstName: true, lastName: true } },
+          kycDocuments: true,
+        },
+        orderBy: { updatedAt: 'desc' },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.prisma.investor.count({ where }),
+    ]);
+
+    return { data, page: query.page, pageSize: query.pageSize, total };
+  }
+
+  /**
+   * Approve or reject an investor's whitelisting. Approve → whitelisted.
+   * Reject → back to identity_submitted: `WhitelistStatus` has no `rejected`
+   * value (it mirrors the frontend enum, a cross-repo contract), so a rejection
+   * is indistinguishable from "never reviewed" apart from the notification the
+   * investor receives (see docs/RAIQUID_CONTEXT.md).
+   */
+  async decideWhitelisting(investorId: string, dto: WhitelistDecisionDto) {
+    const investor = await this.prisma.investor.findUnique({
+      where: { id: investorId },
+      include: { user: { select: { id: true, email: true } } },
+    });
+    if (!investor) {
+      throw new NotFoundException('Investor not found');
+    }
+    if (
+      dto.approve &&
+      investor.whitelistStatus === WhitelistStatus.whitelisted
+    ) {
+      throw new ConflictException('Investor is already whitelisted');
+    }
+
+    const nextStatus = dto.approve
+      ? WhitelistStatus.whitelisted
+      : WhitelistStatus.identity_submitted;
+    const noteSuffix = dto.note ? ` Reviewer note: ${dto.note}` : '';
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.investor.update({
+        where: { id: investor.id },
+        data: { whitelistStatus: nextStatus },
+      });
+      await this.notifications.notify(
+        {
+          userId: investor.user.id,
+          tone: dto.approve
+            ? NotificationTone.positive
+            : NotificationTone.warning,
+          title: dto.approve
+            ? 'Your investor account is whitelisted'
+            : 'Whitelisting needs another look',
+          body: dto.approve
+            ? `You're cleared to fund invoices on the marketplace.${noteSuffix}`
+            : `Your whitelisting submission was not approved. Please review your details and resubmit.${noteSuffix}`,
+          href: dto.approve
+            ? '/investor/marketplace'
+            : '/investor/whitelisting',
+        },
+        tx,
+      );
+      return row;
+    });
+
+    // Email is a courtesy on top of the in-app notification; a send failure
+    // must not roll back the decision.
+    try {
+      await this.email.sendWhitelistDecision(investor.user.email, dto.approve);
+    } catch (err) {
+      this.logger.error(
+        `Whitelisting decision for investor ${investor.id} saved but the email failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    return updated;
   }
 }

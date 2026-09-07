@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotImplementedException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 import type { Env } from '../config/env.validation';
@@ -81,11 +81,31 @@ export class EmailService {
   }
 
   /**
-   * Notify an investor that their whitelisting review completed.
-   * Supports GET /investor/whitelisting status changes.
+   * Notify an investor that their whitelisting review completed. Triggered from
+   * POST /admin/whitelisting/:investorId/decision.
    */
-  sendWhitelistDecision(_to: string, _approved: boolean): Promise<void> {
-    // TODO: implement Resend send with the whitelisting-decision template.
-    throw new NotImplementedException();
+  async sendWhitelistDecision(to: string, approved: boolean): Promise<void> {
+    const subject = approved
+      ? 'Your investor account has been whitelisted'
+      : 'Your whitelisting submission needs another look';
+    const line = approved
+      ? "You're now cleared to fund invoices on the Raiquid marketplace."
+      : 'Your whitelisting submission was not approved. Please review your details and resubmit.';
+    const { error } = await this.resend.emails.send({
+      from: FROM_ADDRESS,
+      to,
+      subject,
+      html: `<p>${line}</p>`,
+      text: line,
+    });
+
+    if (error) {
+      this.logger.error(
+        `Resend failed to send whitelisting decision to ${to}: ${error.message}`,
+      );
+      throw new Error(
+        `Failed to send whitelisting decision email: ${error.message}`,
+      );
+    }
   }
 }

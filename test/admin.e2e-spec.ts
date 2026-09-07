@@ -6,10 +6,12 @@ import type { Request } from 'express';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { EmailService } from '../src/email/email.service';
 import { ClerkAuthGuard } from '../src/auth/clerk-auth.guard';
 import type { AuthUser } from '../src/auth/auth-user.type';
 import {
   InvoiceStatus,
+  NotificationTone,
   OnChainAction,
   OnChainStatus,
   ProvenanceTier,
@@ -25,6 +27,8 @@ describe('Admin (e2e)', () => {
   let app: INestApplication;
   let httpServer: Server;
   let prisma: PrismaService;
+
+  const sendWhitelistDecisionMock = jest.fn().mockResolvedValue(undefined);
 
   let currentUser: AuthUser;
   let adminUser: AuthUser;
@@ -46,6 +50,12 @@ describe('Admin (e2e)', () => {
           context.switchToHttp().getRequest<Request>().user = currentUser;
           return true;
         },
+      })
+      .overrideProvider(EmailService)
+      .useValue({
+        sendBuyerConfirmationLink: jest.fn().mockResolvedValue(undefined),
+        sendBuyerReviewOutcome: jest.fn().mockResolvedValue(undefined),
+        sendWhitelistDecision: sendWhitelistDecisionMock,
       })
       .compile();
 
@@ -218,9 +228,18 @@ describe('Admin (e2e)', () => {
       '/admin/reserve',
       '/admin/provenance',
       '/admin/ledger',
+      '/admin/whitelisting',
     ])('403 for a non-admin role on %s', async (path) => {
       currentUser = businessUser;
       await request(httpServer).get(path).expect(403);
+    });
+
+    it('403 for a non-admin role on POST /admin/whitelisting/:id/decision', async () => {
+      currentUser = businessUser;
+      await request(httpServer)
+        .post('/admin/whitelisting/whatever/decision')
+        .send({ approve: true })
+        .expect(403);
     });
   });
 
@@ -322,6 +341,150 @@ describe('Admin (e2e)', () => {
       const pageBody = page.body as { total: number; data: unknown[] };
       expect(pageBody.total).toBe(4);
       expect(pageBody.data.length).toBe(2);
+    });
+  });
+
+  describe('whitelisting review', () => {
+    // investors created here so the queue/decision assertions have known rows,
+    // independent of the platform-wide seed above.
+    let pendingInvestorId: string;
+    let pendingInvestorUserId: string;
+    let approvedInvestorId: string;
+    let alreadyWhitelistedId: string;
+
+    beforeAll(async () => {
+      const mk = async (tag: string, status: WhitelistStatus) => {
+        const u = await prisma.user.create({
+          data: {
+            clerkUserId: `clerk_wlrev_${tag}_${RUN}`,
+            email: `wlrev-${tag}-${RUN}@test.example`,
+            role: UserRole.investor,
+          },
+        });
+        const inv = await prisma.investor.create({
+          data: { userId: u.id, whitelistStatus: status },
+        });
+        await prisma.kycDocument.create({
+          data: {
+            investorId: inv.id,
+            documentType: 'identity',
+            objectKey: `kyc/${inv.id}/identity/${RUN}`,
+          },
+        });
+        return { userId: u.id, investorId: inv.id };
+      };
+
+      ({ investorId: pendingInvestorId, userId: pendingInvestorUserId } =
+        await mk('pending', WhitelistStatus.in_review));
+      ({ investorId: approvedInvestorId } = await mk(
+        'toapprove',
+        WhitelistStatus.in_review,
+      ));
+      ({ investorId: alreadyWhitelistedId } = await mk(
+        'done',
+        WhitelistStatus.whitelisted,
+      ));
+    });
+
+    it('lists only investors not yet whitelisted, with their KYC docs and email', async () => {
+      currentUser = adminUser;
+      const res = await request(httpServer)
+        .get('/admin/whitelisting?pageSize=100')
+        .expect(200);
+      const body = res.body as {
+        data: Array<{
+          id: string;
+          whitelistStatus: string;
+          user: { email: string };
+          kycDocuments: unknown[];
+        }>;
+        total: number;
+      };
+
+      const ids = body.data.map((i) => i.id);
+      expect(ids).toContain(pendingInvestorId);
+      expect(ids).toContain(approvedInvestorId);
+      expect(ids).not.toContain(alreadyWhitelistedId);
+      expect(
+        body.data.every(
+          (i) => i.whitelistStatus !== WhitelistStatus.whitelisted,
+        ),
+      ).toBe(true);
+      const pending = body.data.find((i) => i.id === pendingInvestorId);
+      expect(pending?.user.email).toBe(`wlrev-pending-${RUN}@test.example`);
+      expect(pending?.kycDocuments.length).toBe(1);
+    });
+
+    it('approve → status whitelisted + a positive notification + decision email', async () => {
+      currentUser = adminUser;
+      sendWhitelistDecisionMock.mockClear();
+
+      await request(httpServer)
+        .post(`/admin/whitelisting/${approvedInvestorId}/decision`)
+        .send({ approve: true, note: 'Docs check out' })
+        .expect(201);
+
+      const row = await prisma.investor.findUniqueOrThrow({
+        where: { id: approvedInvestorId },
+      });
+      expect(row.whitelistStatus).toBe(WhitelistStatus.whitelisted);
+
+      const notes = await prisma.notification.findMany({
+        where: { userId: row.userId },
+      });
+      expect(notes.length).toBe(1);
+      expect(notes[0].tone).toBe(NotificationTone.positive);
+      expect(notes[0].href).toBe('/investor/marketplace');
+      expect(notes[0].body).toContain('Docs check out');
+
+      expect(sendWhitelistDecisionMock).toHaveBeenCalledWith(
+        `wlrev-toapprove-${RUN}@test.example`,
+        true,
+      );
+    });
+
+    it('reject → status back to identity_submitted + a warning notification', async () => {
+      currentUser = adminUser;
+      await request(httpServer)
+        .post(`/admin/whitelisting/${pendingInvestorId}/decision`)
+        .send({ approve: false })
+        .expect(201);
+
+      const row = await prisma.investor.findUniqueOrThrow({
+        where: { id: pendingInvestorId },
+      });
+      expect(row.whitelistStatus).toBe(WhitelistStatus.identity_submitted);
+
+      const notes = await prisma.notification.findMany({
+        where: { userId: pendingInvestorUserId },
+      });
+      expect(notes.length).toBe(1);
+      expect(notes[0].tone).toBe(NotificationTone.warning);
+      expect(notes[0].href).toBe('/investor/whitelisting');
+    });
+
+    it('404 for an unknown investor', async () => {
+      currentUser = adminUser;
+      await request(httpServer)
+        .post('/admin/whitelisting/does-not-exist/decision')
+        .send({ approve: true })
+        .expect(404);
+    });
+
+    it('409 when approving an already-whitelisted investor', async () => {
+      currentUser = adminUser;
+      await request(httpServer)
+        .post(`/admin/whitelisting/${alreadyWhitelistedId}/decision`)
+        .send({ approve: true })
+        .expect(409);
+    });
+
+    it('400 when approve is missing from the body', async () => {
+      currentUser = adminUser;
+      await request(httpServer)
+        .post(`/admin/whitelisting/${alreadyWhitelistedId}/decision`)
+        .send({ note: 'no approve field' })
+        .expect(400);
     });
   });
 });
