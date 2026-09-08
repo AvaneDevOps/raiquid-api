@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 import type { Env } from '../config/env.validation';
 
-const FROM_ADDRESS = 'Raiquid <no-reply@raiquid.io>';
+const FROM_ADDRESS = 'Raiquid <no-reply@send.avane.online>';
 
 @Injectable()
 export class EmailService {

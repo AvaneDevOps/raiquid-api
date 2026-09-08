@@ -158,9 +158,15 @@ learned from the frontend, and behavioural details that would otherwise be a
   rather than 500-ing into Clerk's retry loop. Relinking accounts is an
   unmade product decision.
 
-- **Email delivery needs a verified Resend domain.** `EmailService` sends
-  from `Raiquid <no-reply@raiquid.io>`. That domain has to be verified in
-  the Resend dashboard before sends work outside Resend's sandbox mode.
+- **Email sends from `send.avane.online`.** `EmailService` sends from
+  `Raiquid <no-reply@send.avane.online>` — a verified subdomain of
+  `avane.online`, not the root domain and not `raiquid.io`. It's a
+  subdomain on purpose: `avane.online`'s root already runs Zoho-hosted
+  email (its own MX / SPF records), so Resend's sending infrastructure
+  lives on an isolated subdomain to avoid clashing with that. This is a
+  real verified working domain, not a placeholder — no obligation to
+  change it. Revisit only if a dedicated `raiquid.io` domain is acquired
+  and set up in Resend later.
 
 - **Buyers are matched by lowercased `contactEmail`.** On invoice submit,
   `createInvoice` does a find-or-create on the buyer by lowercased email —
