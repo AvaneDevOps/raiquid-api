@@ -342,4 +342,65 @@ describe('Notifications wired to domain events (e2e)', () => {
       expect(businessRows.every((n) => !investorIds.has(n.id))).toBe(true);
     });
   });
+
+  describe('PATCH /notifications/:id/read', () => {
+    it('marks a notification read; a second call is an idempotent no-op', async () => {
+      currentUser = businessUser;
+      const before = await request(httpServer)
+        .get('/notifications?unreadOnly=true')
+        .expect(200);
+      const target = (before.body as { data: Array<{ id: string }> }).data[0];
+      expect(target).toBeDefined();
+
+      const first = await request(httpServer)
+        .patch(`/notifications/${target.id}/read`)
+        .expect(200);
+      const firstReadAt = (first.body as { readAt: string | null }).readAt;
+      expect(firstReadAt).not.toBeNull();
+
+      const row = await prisma.notification.findUniqueOrThrow({
+        where: { id: target.id },
+      });
+      expect(row.readAt).not.toBeNull();
+
+      const second = await request(httpServer)
+        .patch(`/notifications/${target.id}/read`)
+        .expect(200);
+      expect((second.body as { readAt: string | null }).readAt).toBe(
+        firstReadAt,
+      );
+
+      const after = await request(httpServer)
+        .get('/notifications?unreadOnly=true')
+        .expect(200);
+      expect(
+        (after.body as { data: Array<{ id: string }> }).data.some(
+          (n) => n.id === target.id,
+        ),
+      ).toBe(false);
+    });
+
+    it("404 when the notification isn't the caller's, and it stays unread", async () => {
+      const investorNote = await prisma.notification.findFirstOrThrow({
+        where: { userId: investorUserId, readAt: null },
+      });
+
+      currentUser = businessUser;
+      await request(httpServer)
+        .patch(`/notifications/${investorNote.id}/read`)
+        .expect(404);
+
+      const row = await prisma.notification.findUniqueOrThrow({
+        where: { id: investorNote.id },
+      });
+      expect(row.readAt).toBeNull();
+    });
+
+    it('404 for an unknown id', async () => {
+      currentUser = businessUser;
+      await request(httpServer)
+        .patch('/notifications/does-not-exist/read')
+        .expect(404);
+    });
+  });
 });

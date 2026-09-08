@@ -1,4 +1,8 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationTone } from '../common/enums';
 import { Prisma } from '../generated/prisma/client';
@@ -42,6 +46,23 @@ export class NotificationsService {
       total,
       unreadCount,
     };
+  }
+
+  async markRead(user: AuthUser, id: string) {
+    const userId = this.requireUserId(user);
+    const notification = await this.prisma.notification.findFirst({
+      where: { id, userId },
+    });
+    if (!notification) {
+      throw new NotFoundException('Notification not found');
+    }
+    if (notification.readAt) {
+      return notification;
+    }
+    return this.prisma.notification.update({
+      where: { id },
+      data: { readAt: new Date() },
+    });
   }
 
   notify(input: NotifyInput, tx: Prisma.TransactionClient = this.prisma) {

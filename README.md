@@ -215,10 +215,13 @@ opaque confirm token.
 | Method | Path             | Frontend screen                  |
 | ------ | ---------------- | -------------------------------- |
 | GET    | `/notifications` | notifications tray (all layouts) |
+| PATCH  | `/notifications/:id/read` | tray (mark one read — idempotent) |
 
 `GET /notifications` returns the caller's own rows newest-first, paginated
-(`page`, `pageSize`, `unreadOnly`), plus a top-level `unreadCount`. Rows are
-written by domain events — no endpoint creates them directly:
+(`page`, `pageSize`, `unreadOnly`), plus a top-level `unreadCount`. `PATCH
+/notifications/:id/read` marks one read (404 if it isn't the caller's; a
+second call is a no-op). Rows are written by domain events — no endpoint
+creates them directly:
 
 | Event | Recipient | Tone |
 | ----- | --------- | ---- |

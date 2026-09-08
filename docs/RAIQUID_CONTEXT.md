@@ -131,13 +131,10 @@ learned from the frontend, and behavioural details that would otherwise be a
   admin queue (`whitelistStatus != whitelisted`) shows them again immediately.
   No audit trail records who decided what or when.
 
-- **In-app notifications are wired; `Notification.readAt` has no writer.**
-  Domain events now drop `Notification` rows (see the README table).
-  `GET /notifications` reads them and reports `unreadCount`, but there is **no
-  endpoint to mark one read** — `readAt` stays null forever, so `unreadCount`
-  only grows. The frontend tray needs a `PATCH /notifications/:id` (or a
-  bulk mark-all) before "unread" means anything. Deferred because the frontend
-  contract for that isn't pinned down yet.
+- **No mark-all-as-read.** `PATCH /notifications/:id/read` marks one
+  notification read (idempotent; 404 for a notification that isn't the
+  caller's). There is deliberately no bulk "mark all read" endpoint — no
+  confirmed screen needs one. Add it if a tray design calls for it.
 
 - **Only *full* funding notifies the business.** `fundInvoice` posts a
   notification when the invoice crosses to `funded`, not on each partial
