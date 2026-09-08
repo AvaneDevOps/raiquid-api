@@ -5,10 +5,6 @@ import type { AuthUser } from '../auth/auth-user.type';
 import { NotificationsService } from './notifications.service';
 import { ListNotificationsQueryDto } from './dto/list-notifications.query.dto';
 
-/**
- * Base path `/notifications` matches the frontend's notifications tray endpoint.
- * Requires a Clerk session.
- */
 @ApiTags('notifications')
 @ApiBearerAuth()
 @Controller('notifications')

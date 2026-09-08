@@ -8,15 +8,8 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import type { Env } from '../config/env.validation';
 
-// Presigned URLs are short-lived: long enough to pick a file and upload it,
-// not long enough to be a durable capability if one leaks.
 const PRESIGN_EXPIRY_SECONDS = 600;
 
-/**
- * Cloudflare R2 (S3-API-compatible) access, presigned-URL only. The API never
- * proxies file bytes — clients PUT straight to R2 and GET straight from it
- * using URLs signed here. The endpoint is derived from `R2_ACCOUNT_ID`.
- */
 @Injectable()
 export class StorageService {
   private readonly client: S3Client;
@@ -35,11 +28,6 @@ export class StorageService {
     this.bucket = config.get('R2_BUCKET_NAME', { infer: true });
   }
 
-  /**
-   * Presigned PUT URL. `content-type` is added to the signed headers, so R2
-   * rejects the upload unless the client's PUT sends exactly this
-   * `Content-Type` — it can't swap in a different file type.
-   */
   createUploadUrl(key: string, contentType: string): Promise<string> {
     return getSignedUrl(
       this.client,
@@ -55,7 +43,7 @@ export class StorageService {
     );
   }
 
-  /** Presigned GET URL — for admin document review (not wired to a route yet). */
+  // TODO: no route consumes this yet — admin KYC document review.
   createDownloadUrl(key: string): Promise<string> {
     return getSignedUrl(
       this.client,

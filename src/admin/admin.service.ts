@@ -18,30 +18,21 @@ import type { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import type { LedgerQueryDto } from './dto/ledger-query.dto';
 import type { WhitelistDecisionDto } from './dto/whitelist-decision.dto';
 
-/** Truncate a Date to its UTC calendar day (ms since epoch). */
 function utcDay(d: Date): number {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 }
 
-// "Active in the financing pipeline" = tokenized onward but not yet done.
 const PIPELINE_EXCLUDED: InvoiceStatus[] = [
   InvoiceStatus.submitted,
   InvoiceStatus.awaiting_acceptance,
   InvoiceStatus.repaid,
 ];
 
-// The reserve contribution is only actually collected once an invoice funds.
 const RESERVE_COLLECTED: InvoiceStatus[] = [
   InvoiceStatus.funded,
   InvoiceStatus.repaid,
 ];
 
-/**
- * Admin area — the platform-operator dashboard (/admin/*). Read-only reporting:
- * no money moves here, so the metrics below are deliberately-chosen
- * approximations, each labelled with its definition. This service NEVER writes
- * to `OnChainEvent` (see the schema file header).
- */
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
@@ -55,21 +46,14 @@ export class AdminService {
   async getOverview() {
     const [financed, activeInvoices, repaid, activeInvestors] =
       await this.prisma.$transaction([
-        // Total value financed := sum of fundedAmount across ALL invoices.
-        // This is capital actually deployed (every ₦ has a matching `invested`
-        // WalletTransaction), and it moves continuously with partial funding
-        // rather than only stepping when an invoice fully funds.
         this.prisma.invoice.aggregate({ _sum: { fundedAmount: true } }),
-        // Active invoices := anything past buyer acceptance and not yet repaid.
         this.prisma.invoice.count({
           where: { status: { notIn: PIPELINE_EXCLUDED } },
         }),
-        // On-time rate inputs — see below for why updatedAt.
         this.prisma.invoice.findMany({
           where: { status: InvoiceStatus.repaid },
           select: { dueDate: true, updatedAt: true },
         }),
-        // Active investors := those cleared to actually fund (whitelisted).
         this.prisma.investor.count({
           where: { whitelistStatus: WhitelistStatus.whitelisted },
         }),
@@ -77,11 +61,6 @@ export class AdminService {
 
     const totalValueFinanced = Number(financed._sum.fundedAmount ?? 0);
 
-    // APPROXIMATION: there is no `repaidAt` column (deferred — see
-    // docs/RAIQUID_CONTEXT.md), so `updatedAt` stands in for "when it was
-    // marked repaid". updatedAt moves on any field change, so this can
-    // over- or under-count. Compared at day granularity. null when nothing
-    // has been repaid yet.
     const onTimeRepaymentRate =
       repaid.length === 0
         ? null
@@ -183,11 +162,6 @@ export class AdminService {
     return { data, page: query.page, pageSize: query.pageSize, total };
   }
 
-  /**
-   * The whitelisting review queue — investors who have submitted for review but
-   * are not yet cleared to fund. Each row carries the account email and the KYC
-   * document pointers the operator needs to make a decision.
-   */
   async listWhitelistingQueue(query: PaginationQueryDto) {
     const where = {
       whitelistStatus: { not: WhitelistStatus.whitelisted },
@@ -210,13 +184,6 @@ export class AdminService {
     return { data, page: query.page, pageSize: query.pageSize, total };
   }
 
-  /**
-   * Approve or reject an investor's whitelisting. Approve → whitelisted.
-   * Reject → back to identity_submitted: `WhitelistStatus` has no `rejected`
-   * value (it mirrors the frontend enum, a cross-repo contract), so a rejection
-   * is indistinguishable from "never reviewed" apart from the notification the
-   * investor receives (see docs/RAIQUID_CONTEXT.md).
-   */
   async decideWhitelisting(investorId: string, dto: WhitelistDecisionDto) {
     const investor = await this.prisma.investor.findUnique({
       where: { id: investorId },
@@ -263,8 +230,6 @@ export class AdminService {
       return row;
     });
 
-    // Email is a courtesy on top of the in-app notification; a send failure
-    // must not roll back the decision.
     try {
       await this.email.sendWhitelistDecision(investor.user.email, dto.approve);
     } catch (err) {

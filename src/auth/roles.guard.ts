@@ -9,11 +9,6 @@ import type { Request } from 'express';
 import type { UserRole } from '../common/enums';
 import { ROLES_KEY } from './roles.decorator';
 
-/**
- * Enforces `@Roles(...)`. Assumes `ClerkAuthGuard` already ran and populated
- * `request.user`. Routes without `@Roles` are unaffected. Used to lock the
- * entire AdminController to the `admin` role.
- */
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}

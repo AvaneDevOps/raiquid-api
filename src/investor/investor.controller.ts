@@ -17,10 +17,6 @@ import { FundInvoiceDto } from './dto/fund-invoice.dto';
 import { SubmitWhitelistingDto } from './dto/submit-whitelisting.dto';
 import { UpdateInvestorSettingsDto } from './dto/update-investor-settings.dto';
 
-/**
- * Funder-facing routes. Base path `/investor` matches the frontend's
- * /investor/* group 1:1. All routes require a Clerk session.
- */
 @ApiTags('investor')
 @ApiBearerAuth()
 @Controller('investor')

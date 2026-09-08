@@ -30,18 +30,13 @@ describe('Investor + fund flow (e2e)', () => {
   let businessUser: AuthUser;
   let businessId: string;
   let buyerId: string;
-  // authenticated buyer that owns the invoices createTokenizedInvoice makes
   let buyerUser: AuthUser;
 
-  // whitelisted, funded wallet
   let investorUser: AuthUser;
   let investorId: string;
-  // whitelisted, empty wallet
   let poorInvestorUser: AuthUser;
-  // not whitelisted
   let pendingInvestorUser: AuthUser;
   let pendingInvestorId: string;
-  // whitelisted + funded, used only for the repayment fan-out test
   let repayInvestorUser: AuthUser;
   let repayInvestorId: string;
 
@@ -177,7 +172,6 @@ describe('Investor + fund flow (e2e)', () => {
     });
   }
 
-  /** business creates → buyer accepts via magic link → returns the tokenized invoice id. */
   async function createTokenizedInvoice(invoiceNumber: string, amount: number) {
     currentUser = businessUser;
     const res = await request(httpServer)
@@ -204,7 +198,7 @@ describe('Investor + fund flow (e2e)', () => {
 
   describe('marketplace browsing (open to any investor)', () => {
     it('lists tokenized/funding invoices without a whitelist', async () => {
-      currentUser = pendingInvestorUser; // not whitelisted
+      currentUser = pendingInvestorUser;
       await seedInvoice({
         invoiceNumber: `INV-MKT-${RUN}`,
         status: InvoiceStatus.tokenized,
@@ -253,7 +247,6 @@ describe('Investor + fund flow (e2e)', () => {
       });
       expect(Number(holding.amount)).toBe(100_000);
 
-      // net payout = 100000 - 3% - 1% = 96000
       const payout = await prisma.walletTransaction.findFirstOrThrow({
         where: {
           invoiceId,
@@ -285,7 +278,6 @@ describe('Investor + fund flow (e2e)', () => {
       expect(after.status).toBe(InvoiceStatus.funding);
       expect(Number(after.fundedAmount)).toBe(40_000);
 
-      // no business payout yet
       const payout = await prisma.walletTransaction.findFirst({
         where: { invoiceId: invoice.id, type: WalletTransactionType.deposit },
       });
@@ -340,7 +332,7 @@ describe('Investor + fund flow (e2e)', () => {
         status: InvoiceStatus.tokenized,
         amount: 100_000,
       });
-      currentUser = poorInvestorUser; // whitelisted but balance 0
+      currentUser = poorInvestorUser;
       await request(httpServer)
         .post(`/investor/marketplace/${inv.id}/fund`)
         .send({ amount: 5_000 })
@@ -384,18 +376,15 @@ describe('Investor + fund flow (e2e)', () => {
       const u = new URL(uploadUrl);
       expect(u.protocol).toBe('https:');
       expect(u.host).toContain('.r2.cloudflarestorage.com');
-      // bucket appears somewhere (host for vhost-style, path for path-style)
       expect(uploadUrl).toContain(String(process.env.R2_BUCKET_NAME));
       expect(u.pathname).toContain(objectKey);
       expect(objectKey).toMatch(
         new RegExp(`^kyc/${investorId}/identity/[0-9a-f-]{36}$`),
       );
-      // SigV4 query params present
       expect(u.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/);
       expect(u.searchParams.get('X-Amz-Expires')).toBe('600');
       expect(u.searchParams.has('X-Amz-Credential')).toBe(true);
       expect(u.searchParams.has('X-Amz-Date')).toBe(true);
-      // content-type is bound into the signature (can't swap the file type)
       expect(u.searchParams.get('X-Amz-SignedHeaders')).toContain(
         'content-type',
       );
@@ -536,7 +525,6 @@ describe('Investor + fund flow (e2e)', () => {
     it('wallet balance reflects the deposits minus the investments', async () => {
       currentUser = investorUser;
       const res = await request(httpServer).get('/investor/wallet').expect(200);
-      // 1,000,000 deposit - 100,000 (full) - 40,000 (partial) = 860,000
       expect((res.body as { balance: number }).balance).toBe(860_000);
     });
   });

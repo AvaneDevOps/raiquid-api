@@ -11,8 +11,6 @@ import { ClerkAuthGuard } from '../src/auth/clerk-auth.guard';
 import type { AuthUser } from '../src/auth/auth-user.type';
 import { InvoiceStatus, UserRole } from '../src/common/enums';
 
-// Cold-starting Prisma's query compiler plus a real DB round trip can exceed
-// Jest's 5s default hook timeout under load.
 jest.setTimeout(30_000);
 
 describe('Buyer + Confirm (e2e)', () => {
@@ -23,17 +21,12 @@ describe('Buyer + Confirm (e2e)', () => {
   const sendConfirmationMock = jest.fn().mockResolvedValue(undefined);
   const sendReviewOutcomeMock = jest.fn().mockResolvedValue(undefined);
 
-  // The mock guard reads this at call time, so tests can switch which user
-  // is "signed in" between the business-side and buyer-side calls.
   let currentUser: AuthUser;
   let businessUser: AuthUser;
   let buyerUser: AuthUser;
   let businessId: string;
   let buyerId: string;
 
-  // Unique per run so repeated runs against a non-recreated DB don't create
-  // duplicate Buyer rows for the same email (BusinessService matches buyers
-  // by contactEmail and takes the oldest — see the earlier flake).
   const RUN = randomUUID();
   const BUYER_EMAIL = `buyer-${RUN}@test.example`;
 
@@ -112,7 +105,6 @@ describe('Buyer + Confirm (e2e)', () => {
     await app.close();
   });
 
-  /** Create an invoice through the real business endpoint; return id + token. */
   async function createInvoice(invoiceNumber: string, amount = 50000) {
     currentUser = businessUser;
     const res = await request(httpServer)
@@ -133,7 +125,6 @@ describe('Buyer + Confirm (e2e)', () => {
     return { id, confirmToken: row.confirmToken as string };
   }
 
-  /** Seed an invoice directly — used for states no real flow reaches yet. */
   function seedInvoice(data: {
     invoiceNumber: string;
     status: InvoiceStatus;

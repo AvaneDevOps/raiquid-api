@@ -21,10 +21,6 @@ import type { PayInvoiceDto } from './dto/pay-invoice.dto';
 import type { ReviewConfirmationDto } from './dto/review-confirmation.dto';
 import type { UpdateBuyerSettingsDto } from './dto/update-buyer-settings.dto';
 
-/**
- * Buyer area — the debtor-facing dashboard (/buyer/*) plus the PUBLIC
- * magic-link confirm flow (/confirm/*).
- */
 @Injectable()
 export class BuyerService {
   private readonly logger = new Logger(BuyerService.name);
@@ -34,8 +30,6 @@ export class BuyerService {
     private readonly email: EmailService,
     private readonly notifications: NotificationsService,
   ) {}
-
-  // --- authenticated buyer endpoints ---
 
   async listInvoices(user: AuthUser, query: ListInvoicesQueryDto) {
     const buyer = await this.getBuyerForUser(user);
@@ -100,8 +94,6 @@ export class BuyerService {
       );
     }
 
-    // No partial-payment tracking on Invoice, so only a full payment is
-    // accepted — see docs/RAIQUID_CONTEXT.md.
     if (Number(dto.amount) !== Number(invoice.amount)) {
       throw new BadRequestException(
         `Payment amount must exactly equal the invoice amount (${invoice.amount.toString()})`,
@@ -114,9 +106,6 @@ export class BuyerService {
         include: { investor: true },
       });
 
-      // Principal only. Each holder gets back exactly what they put in
-      // (holding.amount) — no return/yield, because there's no rate field
-      // on Invoice to compute one from (see docs/RAIQUID_CONTEXT.md).
       for (const h of holdings) {
         await tx.walletTransaction.create({
           data: {
@@ -150,8 +139,6 @@ export class BuyerService {
     });
   }
 
-  // --- public magic-link confirm flow (no Clerk session) ---
-
   async getConfirmation(confirmToken: string) {
     const invoice = await this.prisma.invoice.findUnique({
       where: { confirmToken },
@@ -178,16 +165,12 @@ export class BuyerService {
       throw new ConflictException('This invoice has already been reviewed');
     }
 
-    // Business.contactEmail is optional; fall back to the owner's account email.
     const businessEmail =
       invoice.business.contactEmail ?? invoice.business.user.email;
 
     const noteSuffix = dto.note ? ` Buyer's note: ${dto.note}` : '';
 
     if (dto.accept) {
-      // The status change and the in-app notification are one outcome, so
-      // write them together. A failed notification *email* still shouldn't
-      // undo it or fail the request — that stays best-effort below.
       const updated = await this.prisma.$transaction(async (tx) => {
         const inv = await tx.invoice.update({
           where: { id: invoice.id },
@@ -219,10 +202,6 @@ export class BuyerService {
       return updated;
     }
 
-    // accept=false: no status change — InvoiceStatus has no declined/disputed
-    // value, and inventing one backend-only would diverge the shared contract
-    // (see docs/RAIQUID_CONTEXT.md). The notification IS the whole outcome
-    // here, so a send failure propagates rather than being swallowed.
     await this.notifications.notify({
       userId: invoice.business.userId,
       tone: NotificationTone.warning,

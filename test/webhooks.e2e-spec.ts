@@ -9,8 +9,6 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import type { Env } from '../src/config/env.validation';
 
-// Cold-starting Prisma's query compiler plus a real DB round trip can exceed
-// Jest's 5s default hook timeout under load.
 jest.setTimeout(30_000);
 
 describe('WebhooksController (e2e)', () => {
@@ -28,8 +26,6 @@ describe('WebhooksController (e2e)', () => {
       imports: [AppModule],
     }).compile();
 
-    // rawBody: true is what lets the controller verify the exact bytes Clerk
-    // signed, same option main.ts passes to NestFactory.create.
     app = moduleRef.createNestApplication({ rawBody: true });
     await app.init();
     httpServer = app.getHttpServer() as Server;
@@ -55,7 +51,7 @@ describe('WebhooksController (e2e)', () => {
     await app.close();
   });
 
-  it('provisions a User + Business row on a signed user.created event', async () => {
+  it('provisions a User + Business row on a signed user.created event, and a redelivery of the same payload does not duplicate it', async () => {
     const clerkUserId = `user_e2e_${randomUUID()}`;
     const email = `webhook-e2e-${randomUUID()}@acme.test`;
     const payload = JSON.stringify({
@@ -89,7 +85,6 @@ describe('WebhooksController (e2e)', () => {
     });
     expect(business).toMatchObject({ contactEmail: email });
 
-    // Redelivery of the exact same signed payload must not create a duplicate.
     await request(httpServer)
       .post('/webhooks/clerk')
       .set('svix-id', id)

@@ -1,10 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEmail, IsOptional, IsString, MaxLength } from 'class-validator';
 
-/**
- * Body for PATCH /business/settings. Serves the frontend /business/settings
- * screen. All fields optional — partial update.
- */
 export class UpdateBusinessSettingsDto {
   @ApiPropertyOptional()
   @IsOptional()

@@ -1,7 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsString, Length, MaxLength } from 'class-validator';
 
-/** Body for PATCH /investor/settings. Serves the frontend /investor/settings screen. */
 export class UpdateInvestorSettingsDto {
   @ApiPropertyOptional()
   @IsOptional()

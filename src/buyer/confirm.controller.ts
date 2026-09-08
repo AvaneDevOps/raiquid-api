@@ -4,12 +4,6 @@ import { Public } from '../auth/public.decorator';
 import { BuyerService } from './buyer.service';
 import { ReviewConfirmationDto } from './dto/review-confirmation.dto';
 
-/**
- * PUBLIC magic-link confirm flow. Base path `/confirm` matches the frontend's
- * standalone /confirm/[invoiceId] route. Every route here is `@Public()` — it
- * must work with no Clerk session, reached straight from an emailed link. The
- * `:invoiceId` segment is the opaque confirm token, not a raw database id.
- */
 @ApiTags('confirm (public)')
 @Controller('confirm')
 export class ConfirmController {

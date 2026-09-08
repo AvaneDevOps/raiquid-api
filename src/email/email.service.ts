@@ -3,11 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 import type { Env } from '../config/env.validation';
 
-// Sending domain needs to be verified in the Resend dashboard before this
-// works outside of Resend's sandbox mode.
 const FROM_ADDRESS = 'Raiquid <no-reply@raiquid.io>';
 
-/** Wrapper around the Resend transactional-email client. */
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -19,15 +16,10 @@ export class EmailService {
     );
   }
 
-  /** Raw client for callers that need Resend features not wrapped here. */
   get client(): Resend {
     return this.resend;
   }
 
-  /**
-   * Send the buyer the magic link that opens the standalone confirm flow
-   * (frontend route /confirm/:invoiceId). Triggered from POST /business/invoices.
-   */
   async sendBuyerConfirmationLink(
     to: string,
     confirmUrl: string,
@@ -50,10 +42,6 @@ export class EmailService {
     }
   }
 
-  /**
-   * Notify the business that the buyer has responded to a confirmation
-   * request. Triggered from POST /confirm/:invoiceId/review.
-   */
   async sendBuyerReviewOutcome(
     to: string,
     opts: { invoiceNumber: string; accepted: boolean; note?: string },
@@ -80,10 +68,6 @@ export class EmailService {
     }
   }
 
-  /**
-   * Notify an investor that their whitelisting review completed. Triggered from
-   * POST /admin/whitelisting/:investorId/decision.
-   */
   async sendWhitelistDecision(to: string, approved: boolean): Promise<void> {
     const subject = approved
       ? 'Your investor account has been whitelisted'

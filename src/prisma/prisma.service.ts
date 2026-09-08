@@ -9,14 +9,6 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import type { Env } from '../config/env.validation';
 import { PrismaClient } from '../generated/prisma/client';
 
-/**
- * Injectable wrapper around `PrismaClient`.
- *
- * Prisma 7 no longer reads `DATABASE_URL` from schema.prisma, so the app opens
- * its connection through a driver adapter (`@prisma/adapter-pg`) built from the
- * validated config. Connection is established in `onModuleInit` and closed in
- * `onModuleDestroy`.
- */
 @Injectable()
 export class PrismaService
   extends PrismaClient

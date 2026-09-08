@@ -14,19 +14,6 @@ import { PrismaService } from '../prisma/prisma.service';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import type { AuthUser } from './auth-user.type';
 
-/**
- * Verifies the Clerk session JWT on the `Authorization: Bearer <token>` header
- * and attaches an `AuthUser` to `request.user`.
- *
- * This is real, working code (not a stub): it performs Clerk's networkless
- * token verification via `verifyToken` from `@clerk/backend`. Routes/controllers
- * marked with `@Public()` bypass it entirely — used by the buyer magic-link
- * confirm flow.
- *
- * After verification it does a best-effort lookup of the local `User` row to
- * populate `role` / `dbUserId`; a missing row is not fatal (the user may not be
- * provisioned yet) — `RolesGuard` will reject role-restricted routes.
- */
 @Injectable()
 export class ClerkAuthGuard implements CanActivate {
   private readonly logger = new Logger(ClerkAuthGuard.name);

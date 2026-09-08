@@ -11,8 +11,7 @@ import type { Env } from '../src/config/env.validation';
 
 jest.setTimeout(30_000);
 
-// setup-env.ts sets FRONTEND_URL to this.
-const FRONTEND_URL = 'http://localhost:3000';
+const FRONTEND_URL = process.env.FRONTEND_URL as string;
 
 describe('CORS (e2e)', () => {
   let app: INestApplication;
@@ -48,10 +47,7 @@ describe('CORS (e2e)', () => {
     expect(res.headers['access-control-allow-credentials']).toBe('true');
   });
 
-  it('never answers with a wildcard or a foreign origin', async () => {
-    // The `cors` middleware pins Access-Control-Allow-Origin to the single
-    // configured value. A page at evil.example receives FRONTEND_URL (not its
-    // own origin, never `*`), so the browser's same-origin check blocks it.
+  it('answers a foreign origin with FRONTEND_URL, never its own origin or a wildcard', async () => {
     const res = await request(httpServer)
       .get('/health')
       .set('Origin', 'https://evil.example')

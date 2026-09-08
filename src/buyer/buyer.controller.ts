@@ -15,10 +15,6 @@ import { ListInvoicesQueryDto } from './dto/list-invoices.query.dto';
 import { PayInvoiceDto } from './dto/pay-invoice.dto';
 import { UpdateBuyerSettingsDto } from './dto/update-buyer-settings.dto';
 
-/**
- * Debtor-facing routes. Base path `/buyer` matches the frontend's /buyer/*
- * group 1:1. All routes require a Clerk session.
- */
 @ApiTags('buyer')
 @ApiBearerAuth()
 @Controller('buyer')

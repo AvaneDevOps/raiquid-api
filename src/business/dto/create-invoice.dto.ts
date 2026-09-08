@@ -9,10 +9,6 @@ import {
   MaxLength,
 } from 'class-validator';
 
-/**
- * Body for POST /business/invoices — a business submitting a new invoice for
- * financing. Serves the frontend "Submit invoice" form at /business/invoices.
- */
 export class CreateInvoiceDto {
   @ApiProperty({ example: 'INV-2026-0042' })
   @IsString()
@@ -43,7 +39,6 @@ export class CreateInvoiceDto {
   @MaxLength(500)
   description?: string;
 
-  // --- Buyer (debtor) the invoice is billed to ---
   @ApiProperty({ example: 'Acme Manufacturing Ltd' })
   @IsString()
   @MaxLength(200)
@@ -58,10 +53,4 @@ export class CreateInvoiceDto {
   @IsString()
   @MaxLength(32)
   buyerContactPhone?: string;
-
-  // Deliberately no platformFeePct / reserveContributionPct here: fees are
-  // set server-side from the buyer's provenance tier (see
-  // provenance-fee-schedule.ts), never chosen by whoever submits the
-  // invoice. The global ValidationPipe's forbidNonWhitelisted rejects any
-  // request that still sends them.
 }

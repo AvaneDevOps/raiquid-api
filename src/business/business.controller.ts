@@ -15,11 +15,6 @@ import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { ListInvoicesQueryDto } from './dto/list-invoices.query.dto';
 import { UpdateBusinessSettingsDto } from './dto/update-business-settings.dto';
 
-/**
- * Supplier-facing routes. Base path `/business` matches the frontend's
- * /business/* route group 1:1. All routes require a Clerk session (global
- * ClerkAuthGuard); the `business` role is expected but not hard-enforced here.
- */
 @ApiTags('business')
 @ApiBearerAuth()
 @Controller('business')

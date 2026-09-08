@@ -3,11 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { createClerkClient, type ClerkClient } from '@clerk/backend';
 import type { Env } from '../config/env.validation';
 
-/**
- * Injection token for the configured Clerk backend SDK client.
- * There is no official `@clerk/nestjs` package, so we build the client
- * ourselves from `@clerk/backend` and expose it through DI.
- */
 export const CLERK_CLIENT = 'CLERK_CLIENT';
 
 export const ClerkClientProvider: Provider = {

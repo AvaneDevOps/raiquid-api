@@ -1,4 +1,3 @@
-/** Minimal shape of the Clerk `user.created` event payload we actually read. */
 export interface ClerkEmailAddress {
   id: string;
   email_address: string;

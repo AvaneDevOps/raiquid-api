@@ -7,11 +7,6 @@ import { AdminService } from './admin.service';
 import { LedgerQueryDto } from './dto/ledger-query.dto';
 import { WhitelistDecisionDto } from './dto/whitelist-decision.dto';
 
-/**
- * Platform-operator routes. Base path `/admin` matches the frontend's /admin/*
- * group 1:1. `@Roles(admin)` on the controller locks every route to the admin
- * role (enforced by RolesGuard, after the global ClerkAuthGuard).
- */
 @ApiTags('admin')
 @ApiBearerAuth()
 @Roles(UserRole.admin)

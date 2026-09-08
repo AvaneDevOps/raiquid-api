@@ -1,11 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsString, Length, MaxLength } from 'class-validator';
 
-/**
- * Body for POST /investor/whitelisting — an investor submitting identity /
- * residency details to start the whitelisting review. Serves the frontend
- * /investor/whitelisting screen.
- */
 export class SubmitWhitelistingDto {
   @ApiProperty({
     example: 'PT',

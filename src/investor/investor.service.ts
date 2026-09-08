@@ -25,13 +25,11 @@ import type { FundInvoiceDto } from './dto/fund-invoice.dto';
 import type { SubmitWhitelistingDto } from './dto/submit-whitelisting.dto';
 import type { UpdateInvestorSettingsDto } from './dto/update-investor-settings.dto';
 
-// Statuses that mean "open for investment".
 const OPEN_FOR_INVESTMENT: InvoiceStatus[] = [
   InvoiceStatus.tokenized,
   InvoiceStatus.funding,
 ];
 
-/** Investor area — the funder-facing dashboard (/investor/*). */
 @Injectable()
 export class InvestorService {
   constructor(
@@ -41,8 +39,6 @@ export class InvestorService {
   ) {}
 
   async listMarketplace(user: AuthUser, query: PaginationQueryDto) {
-    // Browsing only needs an investor account, not a whitelisted one —
-    // the frontend keeps the marketplace open, only funding is gated.
     await this.getInvestorForUser(user);
     const where = { status: { in: OPEN_FOR_INVESTMENT } };
 
@@ -113,10 +109,6 @@ export class InvestorService {
     }
 
     return this.prisma.$transaction(async (tx) => {
-      // One Holding per (investor, invoice) — accumulate on repeat funding.
-      // tokenUnits mirrors the invested amount as a placeholder; real
-      // on-chain unit accounting needs the separate minting service
-      // (see docs/RAIQUID_CONTEXT.md).
       await tx.holding.upsert({
         where: {
           investorId_invoiceId: {
@@ -233,8 +225,6 @@ export class InvestorService {
     dto: CreateUploadUrlDto,
   ): Promise<{ uploadUrl: string; objectKey: string }> {
     const investor = await this.getInvestorForUser(user);
-    // Key is generated here, never taken from the client — a client-supplied
-    // key is a path-traversal / overwrite-someone-else's-document risk.
     const objectKey = `kyc/${investor.id}/${dto.documentType}/${randomUUID()}`;
     const uploadUrl = await this.storage.createUploadUrl(
       objectKey,
@@ -260,16 +250,12 @@ export class InvestorService {
         objectKey: dto.proofOfAddressKey,
       });
     }
-    // The keys should have come from createWhitelistingUploadUrl for THIS
-    // investor; reject anything outside that namespace.
     if (docs.some((d) => !d.objectKey.startsWith(prefix))) {
       throw new BadRequestException(
         'Document key does not belong to this investor',
       );
     }
 
-    // No admin notification — there's no admin contact list or notification
-    // target defined anywhere yet.
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.investor.update({
         where: { id: investor.id },

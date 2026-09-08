@@ -24,25 +24,21 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 
 @Module({
   imports: [
-    // --- Config: one zod-validated env schema, available everywhere ---
     ConfigModule.forRoot({
       isGlobal: true,
       validate: validateEnv,
     }),
 
-    // --- Logging: nestjs-pino, pretty in dev / JSON otherwise ---
     LoggerModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService<Env, true>) =>
         buildLoggerConfig(config.get('NODE_ENV', { infer: true })),
     }),
 
-    // --- Rate limiting: in-memory store, 100 req / 60s per IP ---
     ThrottlerModule.forRoot({
       throttlers: [{ ttl: 60_000, limit: 100 }],
     }),
 
-    // --- Cross-cutting infrastructure ---
     PrismaModule,
     AuthModule,
     StorageModule,
@@ -50,7 +46,6 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     HealthModule,
     WebhooksModule,
 
-    // --- Feature areas (1:1 with the frontend route groups) ---
     BusinessModule,
     BuyerModule,
     InvestorModule,
@@ -58,23 +53,16 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     NotificationsModule,
   ],
   providers: [
-    // Global input validation (DTOs + class-validator)
     {
       provide: APP_PIPE,
       useValue: new ValidationPipe({
         whitelist: true,
         forbidNonWhitelisted: true,
         transform: true,
-        // No implicit conversion: DTOs opt in explicitly with @Type()/@Transform.
-        // (Implicit conversion silently coerces e.g. any string to `true`,
-        // defeating @IsBoolean on request bodies.)
       }),
     },
-    // Consistent JSON error envelope
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
-    // Rate-limit every route
     { provide: APP_GUARD, useClass: ThrottlerGuard },
-    // Attach stack traces to pino error logs
     { provide: APP_INTERCEPTOR, useClass: LoggerErrorInterceptor },
   ],
 })

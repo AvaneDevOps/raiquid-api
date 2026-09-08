@@ -32,12 +32,8 @@ interface BusinessSettingsResponse {
   legalName: string;
 }
 
-// Cold-starting Prisma's query compiler plus a real DB round trip can exceed
-// Jest's 5s default hook timeout under load.
 jest.setTimeout(30_000);
 
-// Unique per run — repeated runs against a non-recreated DB (and parallel
-// suites) must not collide on User.clerkUserId / User.email or reuse a buyer.
 const RUN = randomUUID();
 const BUYER_EMAIL = `buyer-${RUN}@acme-buyer.test`;
 
@@ -53,10 +49,6 @@ describe('BusinessController (e2e)', () => {
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
     })
-      // ClerkAuthGuard is registered globally via APP_GUARD (as a
-      // useExisting alias, specifically so it's independently overridable
-      // here) — overrideProvider replaces the singleton every APP_GUARD
-      // invocation resolves to, without a real Clerk session.
       .overrideProvider(ClerkAuthGuard)
       .useValue({
         canActivate: (context: ExecutionContext) => {
@@ -122,8 +114,6 @@ describe('BusinessController (e2e)', () => {
     expect(body.status).toBe('submitted');
     expect(body.buyer.contactEmail).toBe(BUYER_EMAIL);
 
-    // Fresh buyer, so the schema default tier; fees come from the schedule
-    // for that tier, never from the request body.
     expect(body.buyer.provenanceTier).toBe(ProvenanceTier.quarried);
     const expectedFees = PROVENANCE_FEE_SCHEDULE[body.buyer.provenanceTier];
     expect(Number(body.platformFeePct)).toBe(expectedFees.platformFeePct);

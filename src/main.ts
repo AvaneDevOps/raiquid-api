@@ -8,21 +8,17 @@ import type { Env } from './config/env.validation';
 import { configureCors } from './config/cors.config';
 
 async function bootstrap(): Promise<void> {
-  // rawBody: true exposes req.rawBody, needed by the Clerk webhook route to
-  // verify svix signatures against the exact bytes Clerk sent.
   const app = await NestFactory.create(AppModule, {
     bufferLogs: true,
     rawBody: true,
   });
 
-  // Route Nest's own logs through pino.
   app.useLogger(app.get(Logger));
 
   const config = app.get<ConfigService<Env, true>>(ConfigService);
 
   configureCors(app, config);
 
-  // Swagger / OpenAPI, served at /docs.
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Raiquid API')
     .setDescription(

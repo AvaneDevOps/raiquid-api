@@ -60,11 +60,6 @@ export class WebhooksService {
   }
 
   private async provisionUser(data: ClerkUserData): Promise<void> {
-    // Clerk's client-side `signUp` can only write `unsafe_metadata` directly;
-    // setting `public_metadata` requires a backend call with the secret key.
-    // The frontend's real Clerk integration isn't wired up yet, so this is an
-    // assumption to verify once it is — check public_metadata first in case
-    // the role ends up being set server-side instead.
     const rawRole = data.public_metadata?.role ?? data.unsafe_metadata?.role;
     if (!isUserRole(rawRole)) {
       this.logger.warn(
@@ -82,8 +77,6 @@ export class WebhooksService {
       );
       return;
     }
-    // Normalize so the same address in different casing always matches the
-    // same local User row (email is unique, matched case-sensitively).
     const email = rawEmail.toLowerCase();
 
     const firstName = data.first_name ?? undefined;
@@ -137,17 +130,12 @@ export class WebhooksService {
             });
             break;
           case UserRole.admin:
-            // No profile table for admins.
             break;
         }
 
         return user.id;
       });
     } catch (err) {
-      // A different clerkUserId already owns this email (e.g. a Clerk account
-      // deleted then recreated — user.deleted isn't handled yet). Retrying
-      // won't fix it, so log and skip instead of 500-ing into Clerk's retry
-      // loop. Relinking accounts is a product decision, not made here.
       if (isUniqueConstraintError(err)) {
         this.logger.warn(
           `Skipping provisioning for Clerk user ${data.id}: email ${email} already belongs to another user`,

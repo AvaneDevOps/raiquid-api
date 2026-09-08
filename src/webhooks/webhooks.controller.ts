@@ -11,10 +11,6 @@ import type { Request } from 'express';
 import { Public } from '../auth/public.decorator';
 import { WebhooksService } from './webhooks.service';
 
-/**
- * Called by Clerk's servers, not a logged-in user — every route here is
- * @Public() and authenticated by webhook signature instead of a session.
- */
 @ApiExcludeController()
 @Controller('webhooks')
 export class WebhooksController {

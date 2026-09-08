@@ -64,10 +64,6 @@ describe('Admin (e2e)', () => {
     httpServer = app.getHttpServer() as Server;
     prisma = app.get(PrismaService);
 
-    // Admin metrics are platform-wide aggregates, so this suite needs a known
-    // empty slate to assert exact numbers. Runs after any other suite's
-    // afterAll, and before it seeds its own data — safe within one test:e2e
-    // run, and clears leftovers from a previous run against the same DB.
     await prisma.$transaction([
       prisma.onChainEvent.deleteMany(),
       prisma.kycDocument.deleteMany(),
@@ -81,7 +77,6 @@ describe('Admin (e2e)', () => {
       prisma.user.deleteMany(),
     ]);
 
-    // Admin needs no profile row — matches how the webhook handles admins.
     const admin = await prisma.user.create({
       data: {
         clerkUserId: `clerk_admin_${RUN}`,
@@ -107,7 +102,6 @@ describe('Admin (e2e)', () => {
       },
     });
 
-    // --- Buyers: 2 quarried, 1 carried, 1 anchored ---
     const mkBuyer = (tag: string, tier: ProvenanceTier) =>
       prisma.buyer.create({
         data: {
@@ -121,7 +115,6 @@ describe('Admin (e2e)', () => {
     await mkBuyer('c', ProvenanceTier.carried);
     await mkBuyer('a', ProvenanceTier.anchored);
 
-    // --- Invoices across statuses ---
     const mkInvoice = (o: {
       n: string;
       status: InvoiceStatus;
@@ -172,7 +165,7 @@ describe('Admin (e2e)', () => {
       status: InvoiceStatus.funded,
       amount: 100_000,
       fundedAmount: 100_000,
-      reserveContributionPct: 2, // different on purpose — proves per-invoice calc
+      reserveContributionPct: 2,
       dueDate: '2027-06-01',
     });
     await mkInvoice({
@@ -181,7 +174,7 @@ describe('Admin (e2e)', () => {
       amount: 50_000,
       fundedAmount: 50_000,
       reserveContributionPct: 1,
-      dueDate: '2027-01-10', // future vs updatedAt≈now → on time
+      dueDate: '2027-01-10',
     });
     await mkInvoice({
       n: 'REPAID-LATE',
@@ -189,10 +182,9 @@ describe('Admin (e2e)', () => {
       amount: 50_000,
       fundedAmount: 50_000,
       reserveContributionPct: 1,
-      dueDate: '2020-01-10', // long past vs updatedAt≈now → late
+      dueDate: '2020-01-10',
     });
 
-    // --- Investors: 2 whitelisted, 1 pending ---
     const mkInvestor = async (tag: string, status: WhitelistStatus) => {
       const u = await prisma.user.create({
         data: {
@@ -209,7 +201,6 @@ describe('Admin (e2e)', () => {
     await mkInvestor('wl2', WhitelistStatus.whitelisted);
     await mkInvestor('pending', WhitelistStatus.identity_submitted);
 
-    // --- OnChainEvents (seeded directly; the API never writes this table) ---
     const mkEvent = (action: OnChainAction, status: OnChainStatus) =>
       prisma.onChainEvent.create({ data: { action, status } });
     await mkEvent(OnChainAction.mint, OnChainStatus.confirmed);
@@ -255,13 +246,9 @@ describe('Admin (e2e)', () => {
         definitions: Record<string, string>;
       };
 
-      // Σ fundedAmount = 0 + 0 + 30000 + 100000 + 50000 + 50000
       expect(body.totalValueFinanced).toBe(230_000);
-      // tokenized + funding + funded
       expect(body.activeInvoices).toBe(3);
-      // 1 on-time of 2 repaid
       expect(body.onTimeRepaymentRate).toBe(0.5);
-      // 2 whitelisted
       expect(body.activeInvestors).toBe(2);
       expect(body.definitions.onTimeRepaymentRate).toMatch(/APPROXIMATION/);
     });
@@ -278,7 +265,6 @@ describe('Admin (e2e)', () => {
         claims: unknown[];
       };
 
-      // funded 100000*2% + repaid-ok 50000*1% + repaid-late 50000*1%
       expect(body.reserveBalance).toBe(3_000);
       expect(body.totalValueFinanced).toBe(230_000);
       expect(body.coverageRatio).toBeCloseTo(3_000 / 230_000, 10);
@@ -304,7 +290,6 @@ describe('Admin (e2e)', () => {
 
       expect(body.buyers.length).toBe(4);
       expect(body.byTier).toEqual({ quarried: 2, carried: 1, anchored: 1 });
-      // reputation fields are unpopulated defaults for every buyer
       for (const b of body.buyers) {
         expect(Number(b.acceptanceRate)).toBe(0);
         expect(Number(b.onTimePaymentRate)).toBe(0);
@@ -345,8 +330,6 @@ describe('Admin (e2e)', () => {
   });
 
   describe('whitelisting review', () => {
-    // investors created here so the queue/decision assertions have known rows,
-    // independent of the platform-wide seed above.
     let pendingInvestorId: string;
     let pendingInvestorUserId: string;
     let approvedInvestorId: string;

@@ -19,7 +19,6 @@ import type { CreateInvoiceDto } from './dto/create-invoice.dto';
 import type { ListInvoicesQueryDto } from './dto/list-invoices.query.dto';
 import type { UpdateBusinessSettingsDto } from './dto/update-business-settings.dto';
 
-/** Business area — the supplier-facing dashboard (/business/*). */
 @Injectable()
 export class BusinessService {
   private readonly logger = new Logger(BusinessService.name);
@@ -54,10 +53,6 @@ export class BusinessService {
   async createInvoice(user: AuthUser, dto: CreateInvoiceDto) {
     const business = await this.getBusinessForUser(user);
 
-    // Buyers aren't authenticated accounts by default, so they're matched by
-    // contact email; normalized to lower case so casing differences don't
-    // fragment one buyer (and its provenance tier) across rows. There's a
-    // small race window between find and create, acceptable at this scale.
     const buyerEmail = dto.buyerContactEmail.toLowerCase();
     const buyer =
       (await this.prisma.buyer.findFirst({
@@ -72,8 +67,6 @@ export class BusinessService {
       }));
 
     const confirmToken = randomBytes(32).toString('hex');
-    // Fees are never client input — CreateInvoiceDto has no fee fields at
-    // all, they're resolved from the buyer's provenance tier.
     const fees = PROVENANCE_FEE_SCHEDULE[buyer.provenanceTier];
 
     const invoice = await this.prisma.invoice
@@ -101,9 +94,6 @@ export class BusinessService {
         throw err;
       });
 
-    // The invoice is already durably created at this point; a failed email
-    // shouldn't fail the request and leave the client thinking nothing
-    // happened (or retrying into a duplicate-invoiceNumber 409).
     const confirmUrl = `${this.config.get('FRONTEND_URL', { infer: true })}/confirm/${confirmToken}`;
     try {
       await this.email.sendBuyerConfirmationLink(

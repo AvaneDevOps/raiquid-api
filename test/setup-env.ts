@@ -1,7 +1,3 @@
-// Env vars for e2e tests, which boot the real AppModule (and therefore the
-// real zod-validated ConfigModule). DATABASE_URL should point at a real
-// throwaway Postgres (see README) — everything else here is a dummy value,
-// since these tests never make a real Clerk/R2/Resend call.
 process.env.NODE_ENV ??= 'test';
 process.env.PORT ??= '3099';
 process.env.DATABASE_URL ??=

@@ -128,7 +128,6 @@ describe('Notifications wired to domain events (e2e)', () => {
     await app.close();
   });
 
-  /** business creates an invoice → buyer accepts via magic link. Returns id. */
   async function createTokenizedInvoice(invoiceNumber: string, amount: number) {
     currentUser = businessUser;
     const res = await request(httpServer)
@@ -224,7 +223,6 @@ describe('Notifications wired to domain events (e2e)', () => {
     );
     expect(hit).toBeDefined();
     expect(hit?.tone).toBe(NotificationTone.positive);
-    // net of 3% platform + 1% reserve on 100,000 => 96,000
     expect(hit?.body).toContain('96000');
   });
 
@@ -297,7 +295,6 @@ describe('Notifications wired to domain events (e2e)', () => {
       };
 
       expect(body.total).toBeGreaterThanOrEqual(3);
-      // nothing has been marked read
       expect(body.unreadCount).toBe(body.total);
       expect(body.data.every((n) => n.readAt === null)).toBe(true);
       const times = body.data.map((n) => new Date(n.createdAt).getTime());
@@ -315,7 +312,6 @@ describe('Notifications wired to domain events (e2e)', () => {
     });
 
     it('unreadOnly=true excludes read notifications', async () => {
-      // mark one of the business user's notifications read
       const one = await prisma.notification.findFirstOrThrow({
         where: { userId: businessUserId },
       });

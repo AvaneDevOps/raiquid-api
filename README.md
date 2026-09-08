@@ -144,6 +144,11 @@ Every route requires a valid Clerk session (`Authorization: Bearer <token>`),
 enforced globally by `ClerkAuthGuard`, **except** routes marked _public_ below.
 `AdminController` additionally requires the `admin` role (`RolesGuard`).
 
+CORS is locked to `FRONTEND_URL` (credentialed); every other browser origin is
+blocked. See `docs/RAIQUID_CONTEXT.md` → Implementation notes for the details of
+this and the other cross-cutting behaviour (validation pipe, rate limiting,
+error envelope, logging).
+
 ### Cross-cutting
 
 | Method | Path       | Auth   | Frontend / purpose                          |
@@ -238,6 +243,18 @@ failed send is logged, not rolled back.
   makes it functional.
 - **Commit scopes** are area-based and enforced by commitlint — see
   `commitlint.config.js`.
+- **Source comments are TODO / FIXME / placeholder markers only** — a
+  single-line `//` for unimplemented or deferred work, nothing else. No
+  explanatory `/** */` blocks or prose `//` comments. The reasoning a comment
+  would carry — a business rule, an edge case, a why, an assumption, a
+  deferred decision — belongs in `docs/RAIQUID_CONTEXT.md` (Open Decisions
+  for a gap, Implementation notes for a behavioural detail) or the README.
+  Move it there first, then delete it from the code; rename anything the
+  comment was propping up so the code reads on its own. Swagger decorator
+  text (`@ApiProperty` / `@ApiOperation` descriptions) is API content, not a
+  comment — it stays.
+- **Keep `.env.example` in sync** with the zod schema in
+  `src/config/env.validation.ts`.
 
 ## Git hooks
 
