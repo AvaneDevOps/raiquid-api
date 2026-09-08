@@ -7,6 +7,15 @@ transfers / burns on Base Sepolia via Brickken) are a separate service; this
 API only **mirrors** their results in the `OnChainEvent` table for the admin
 ledger.
 
+## Documentation
+
+| Doc | For |
+| --- | --- |
+| `/docs` (Swagger, served by the running app) | exact request/response shapes — the field-by-field reference |
+| [`docs/FRONTEND_INTEGRATION.md`](docs/FRONTEND_INTEGRATION.md) | frontend developers: how the endpoints fit together into real flows, auth, error handling, known limitations |
+| [`docs/RAIQUID_CONTEXT.md`](docs/RAIQUID_CONTEXT.md) | backend-internal reasoning: deferred decisions, gaps, implementation notes |
+| this README | running, building, deploying, conventions |
+
 > Status: project scaffold. Controllers/services are wired but their bodies are
 > stubs (`NotImplementedException`) — the Prisma schema, the DTOs, and all
 > infra wiring are real.
