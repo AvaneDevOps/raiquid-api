@@ -134,7 +134,7 @@ export class BuyerService {
 
       return tx.invoice.update({
         where: { id: invoice.id },
-        data: { status: InvoiceStatus.repaid },
+        data: { status: InvoiceStatus.repaid, repaidAt: new Date() },
       });
     });
   }

@@ -486,6 +486,11 @@ describe('Investor + fund flow (e2e)', () => {
         where: { id: invoiceId },
       });
       expect(invoice.status).toBe(InvoiceStatus.repaid);
+      expect(invoice.repaidAt).not.toBeNull();
+      expect(invoice.repaidAt!.getTime()).toBeGreaterThan(
+        invoice.createdAt.getTime(),
+      );
+      expect(Date.now() - invoice.repaidAt!.getTime()).toBeLessThan(60_000);
 
       const holding = await prisma.holding.findUniqueOrThrow({
         where: {

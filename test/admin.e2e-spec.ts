@@ -122,6 +122,7 @@ describe('Admin (e2e)', () => {
       fundedAmount: number;
       reserveContributionPct: number;
       dueDate: string;
+      repaidAt?: string;
     }) =>
       prisma.invoice.create({
         data: {
@@ -134,6 +135,7 @@ describe('Admin (e2e)', () => {
           platformFeePct: 3,
           reserveContributionPct: o.reserveContributionPct,
           dueDate: new Date(o.dueDate),
+          repaidAt: o.repaidAt ? new Date(o.repaidAt) : null,
         },
       });
     await mkInvoice({
@@ -175,6 +177,7 @@ describe('Admin (e2e)', () => {
       fundedAmount: 50_000,
       reserveContributionPct: 1,
       dueDate: '2027-01-10',
+      repaidAt: '2026-09-01',
     });
     await mkInvoice({
       n: 'REPAID-LATE',
@@ -183,6 +186,16 @@ describe('Admin (e2e)', () => {
       fundedAmount: 50_000,
       reserveContributionPct: 1,
       dueDate: '2020-01-10',
+      repaidAt: '2026-09-08',
+    });
+    await mkInvoice({
+      n: 'REPAID-PRECISE',
+      status: InvoiceStatus.repaid,
+      amount: 20_000,
+      fundedAmount: 20_000,
+      reserveContributionPct: 1,
+      dueDate: '2026-09-05',
+      repaidAt: '2026-09-03',
     });
 
     const mkInvestor = async (tag: string, status: WhitelistStatus) => {
@@ -246,11 +259,30 @@ describe('Admin (e2e)', () => {
         definitions: Record<string, string>;
       };
 
-      expect(body.totalValueFinanced).toBe(230_000);
+      expect(body.totalValueFinanced).toBe(250_000);
       expect(body.activeInvoices).toBe(3);
-      expect(body.onTimeRepaymentRate).toBe(0.5);
       expect(body.activeInvestors).toBe(2);
-      expect(body.definitions.onTimeRepaymentRate).toMatch(/APPROXIMATION/);
+
+      const onTimeRepaid = ['REPAID-OK', 'REPAID-PRECISE'];
+      const lateRepaid = ['REPAID-LATE'];
+      expect(body.onTimeRepaymentRate).toBeCloseTo(
+        onTimeRepaid.length / (onTimeRepaid.length + lateRepaid.length),
+        10,
+      );
+      expect(body.definitions.onTimeRepaymentRate).toMatch(/repaidAt/);
+    });
+
+    it('uses repaidAt, not the updatedAt proxy: REPAID-PRECISE was paid before its due date but its row was last written afterwards', async () => {
+      const precise = await prisma.invoice.findFirstOrThrow({
+        where: { invoiceNumber: `REPAID-PRECISE-${RUN}` },
+      });
+      expect(precise.repaidAt).not.toBeNull();
+      expect(precise.repaidAt!.getTime()).toBeLessThan(
+        precise.dueDate.getTime(),
+      );
+      expect(precise.updatedAt.getTime()).toBeGreaterThan(
+        precise.dueDate.getTime(),
+      );
     });
   });
 
@@ -265,9 +297,9 @@ describe('Admin (e2e)', () => {
         claims: unknown[];
       };
 
-      expect(body.reserveBalance).toBe(3_000);
-      expect(body.totalValueFinanced).toBe(230_000);
-      expect(body.coverageRatio).toBeCloseTo(3_000 / 230_000, 10);
+      expect(body.reserveBalance).toBe(3_200);
+      expect(body.totalValueFinanced).toBe(250_000);
+      expect(body.coverageRatio).toBeCloseTo(3_200 / 250_000, 10);
       expect(body.claims).toEqual([]);
     });
   });

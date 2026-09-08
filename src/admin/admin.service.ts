@@ -51,8 +51,8 @@ export class AdminService {
           where: { status: { notIn: PIPELINE_EXCLUDED } },
         }),
         this.prisma.invoice.findMany({
-          where: { status: InvoiceStatus.repaid },
-          select: { dueDate: true, updatedAt: true },
+          where: { status: InvoiceStatus.repaid, repaidAt: { not: null } },
+          select: { dueDate: true, repaidAt: true },
         }),
         this.prisma.investor.count({
           where: { whitelistStatus: WhitelistStatus.whitelisted },
@@ -64,8 +64,10 @@ export class AdminService {
     const onTimeRepaymentRate =
       repaid.length === 0
         ? null
-        : repaid.filter((i) => utcDay(i.updatedAt) <= utcDay(i.dueDate))
-            .length / repaid.length;
+        : repaid.filter(
+            (i) =>
+              i.repaidAt !== null && utcDay(i.repaidAt) <= utcDay(i.dueDate),
+          ).length / repaid.length;
 
     return {
       totalValueFinanced,
@@ -78,7 +80,7 @@ export class AdminService {
         activeInvoices:
           'Invoices whose status is not submitted / awaiting_acceptance / repaid.',
         onTimeRepaymentRate:
-          'APPROXIMATION — repaid invoices with updatedAt <= dueDate (day granularity) over all repaid invoices. No repaidAt field exists; updatedAt is a proxy. null until something is repaid.',
+          'Repaid invoices with repaidAt <= dueDate (day granularity) over all repaid invoices. null until something is repaid.',
         activeInvestors:
           'Investor rows with whitelistStatus = whitelisted (cleared to fund).',
       },

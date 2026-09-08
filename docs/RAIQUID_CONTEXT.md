@@ -113,17 +113,6 @@ learned from the frontend, and behavioural details that would otherwise be a
   signature computation so the URL *shape* is verified, but no real
   upload has happened.
 
-- **`/admin/overview` on-time repayment rate is an approximation.**
-  There is no `repaidAt` column (deferred here twice already), so
-  `AdminService.getOverview` uses `Invoice.updatedAt <= dueDate` (day
-  granularity) as the on-time signal for repaid invoices. `updatedAt` is
-  touched by *any* field write, not just the repaid transition, so the
-  rate can drift in either direction. It's returned with an explicit
-  `definitions.onTimeRepaymentRate` label and is `null` until anything is
-  repaid. A real implementation needs the `repaidAt` field — the same one
-  the partial-payment and repayment-audit gaps above also need. This is
-  the third feature to want it; it's probably time.
-
 - **Concurrent funding of the same invoice has a race window.**
   `fundInvoice` reads the invoice, checks `remaining >= amount`, then
   writes in a transaction using an atomic `increment` on `fundedAmount`.
@@ -263,6 +252,13 @@ knowing before you change the surrounding code.
 
 - **The `admin` role has no profile table** (unlike `business` / `buyer` /
   `investor`, which each get a 1:1 profile row from the Clerk webhook).
+
+- **`/admin/overview` on-time repayment rate** compares `Invoice.repaidAt`
+  (set in `payInvoice`'s transaction) against `dueDate` at **day
+  granularity** (`utcDay()`), not exact timestamp — `dueDate` is a
+  calendar date at midnight, so an invoice paid any time on its due date
+  counts as on time. The rate is `null` until at least one invoice is
+  repaid.
 
 - **R2 storage is presigned-URL only** — the API never proxies file bytes.
   Presigned URLs expire after 600s (`PRESIGN_EXPIRY_SECONDS`): long enough

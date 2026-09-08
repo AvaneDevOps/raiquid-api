@@ -212,6 +212,8 @@ model Invoice {
   // Magic-link confirm flow (public GET /confirm/:invoiceId).
   confirmToken           String?       @unique
   confirmedAt            DateTime?
+  // Set once, in the same transaction that flips status to `repaid`.
+  repaidAt               DateTime?
   createdAt              DateTime      @default(now())
   updatedAt              DateTime      @updatedAt
 
