@@ -21,6 +21,7 @@ import {
 import { walletBalance } from '../common/wallet-balance';
 import type { Investor } from '../generated/prisma/client';
 import type { CreateUploadUrlDto } from './dto/create-upload-url.dto';
+import type { DepositDto } from './dto/deposit.dto';
 import type { FundInvoiceDto } from './dto/fund-invoice.dto';
 import type { SubmitWhitelistingDto } from './dto/submit-whitelisting.dto';
 import type { UpdateInvestorSettingsDto } from './dto/update-investor-settings.dto';
@@ -276,8 +277,24 @@ export class InvestorService {
 
   async getWallet(user: AuthUser) {
     const investor = await this.getInvestorForUser(user);
+    return this.walletView(investor.id);
+  }
+
+  async deposit(user: AuthUser, dto: DepositDto) {
+    const investor = await this.getInvestorForUser(user);
+    await this.prisma.walletTransaction.create({
+      data: {
+        type: WalletTransactionType.deposit,
+        amount: dto.amount,
+        investorId: investor.id,
+      },
+    });
+    return this.walletView(investor.id);
+  }
+
+  private async walletView(investorId: string) {
     const transactions = await this.prisma.walletTransaction.findMany({
-      where: { investorId: investor.id },
+      where: { investorId },
       orderBy: { createdAt: 'desc' },
     });
     return {

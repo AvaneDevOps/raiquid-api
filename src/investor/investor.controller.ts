@@ -13,6 +13,7 @@ import type { AuthUser } from '../auth/auth-user.type';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import { InvestorService } from './investor.service';
 import { CreateUploadUrlDto } from './dto/create-upload-url.dto';
+import { DepositDto } from './dto/deposit.dto';
 import { FundInvoiceDto } from './dto/fund-invoice.dto';
 import { SubmitWhitelistingDto } from './dto/submit-whitelisting.dto';
 import { UpdateInvestorSettingsDto } from './dto/update-investor-settings.dto';
@@ -96,6 +97,12 @@ export class InvestorController {
   @ApiOperation({ summary: 'Get wallet balance and transaction history' })
   getWallet(@CurrentUser() user: AuthUser) {
     return this.investor.getWallet(user);
+  }
+
+  @Post('wallet/deposit')
+  @ApiOperation({ summary: 'Add simulated sandbox funds to the wallet' })
+  deposit(@CurrentUser() user: AuthUser, @Body() dto: DepositDto) {
+    return this.investor.deposit(user, dto);
   }
 
   @Get('settings')

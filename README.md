@@ -196,6 +196,7 @@ opaque confirm token.
 | GET    | `/investor/whitelisting`          | `/investor/whitelisting`          |
 | POST   | `/investor/whitelisting`          | `/investor/whitelisting` (submit)  |
 | GET    | `/investor/wallet`                | `/investor/wallet`               |
+| POST   | `/investor/wallet/deposit`        | `/investor/wallet` (Deposit — adds simulated sandbox funds) |
 | GET    | `/investor/settings`              | `/investor/settings`             |
 | PATCH  | `/investor/settings`              | `/investor/settings`             |
 

@@ -81,14 +81,6 @@ learned from the frontend, and behavioural details that would otherwise be a
   rejects (403) unless `whitelistStatus === whitelisted`. Recording this
   because it's a deliberate asymmetry, not an oversight.
 
-- **No investor deposit endpoint.** `GET /investor/wallet` exists, but
-  there is no `POST` anywhere in this API for an investor to add funds to
-  their wallet. A real investor's balance is therefore always 0, so
-  `fundInvoice`'s balance check can never pass in production. The e2e
-  tests seed a `deposit` `WalletTransaction` directly via Prisma to work
-  around this. Needs a deposit flow (its own endpoint, or an off-platform
-  payment webhook) before funding works end to end.
-
 - **`Holding.tokenUnits` is a placeholder.** On funding, `tokenUnits` is
   set equal to the invested `amount`. Real on-chain unit accounting (how
   many invoice tokens a given ₦ amount buys) comes from the separate

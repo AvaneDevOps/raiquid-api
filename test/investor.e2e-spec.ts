@@ -39,6 +39,8 @@ describe('Investor + fund flow (e2e)', () => {
   let pendingInvestorId: string;
   let repayInvestorUser: AuthUser;
   let repayInvestorId: string;
+  let depositInvestorUser: AuthUser;
+  let depositInvestorId: string;
 
   const authFor = (dbUserId: string, role: UserRole): AuthUser => ({
     clerkUserId: `clerk_${role}_${dbUserId}`,
@@ -145,6 +147,8 @@ describe('Investor + fund flow (e2e)', () => {
       await makeInvestor('pending', WhitelistStatus.identity_submitted, 0));
     ({ user: repayInvestorUser, investorId: repayInvestorId } =
       await makeInvestor('repay', WhitelistStatus.whitelisted, 200_000));
+    ({ user: depositInvestorUser, investorId: depositInvestorId } =
+      await makeInvestor('deposit', WhitelistStatus.whitelisted, 0));
   });
 
   afterAll(async () => {
@@ -531,6 +535,92 @@ describe('Investor + fund flow (e2e)', () => {
       currentUser = investorUser;
       const res = await request(httpServer).get('/investor/wallet').expect(200);
       expect((res.body as { balance: number }).balance).toBe(860_000);
+    });
+  });
+
+  describe('wallet deposit → fund (real, unseeded flow)', () => {
+    it('credits the wallet and returns the updated view', async () => {
+      currentUser = depositInvestorUser;
+      const res = await request(httpServer)
+        .post('/investor/wallet/deposit')
+        .send({ amount: 250_000 })
+        .expect(201);
+      const body = res.body as {
+        balance: number;
+        transactions: Array<{ type: string; amount: string }>;
+      };
+      expect(body.balance).toBe(250_000);
+
+      const rows = await prisma.walletTransaction.findMany({
+        where: { investorId: depositInvestorId },
+      });
+      expect(rows).toHaveLength(1);
+      expect(rows[0].type).toBe(WalletTransactionType.deposit);
+      expect(Number(rows[0].amount)).toBe(250_000);
+    });
+
+    it.each([[0], [-100], [12.345]])(
+      'rejects a non-positive / over-precise amount: %p',
+      async (amount) => {
+        currentUser = depositInvestorUser;
+        await request(httpServer)
+          .post('/investor/wallet/deposit')
+          .send({ amount })
+          .expect(400);
+      },
+    );
+
+    it('a deposit made through the endpoint is then spent by fundInvoice', async () => {
+      const invoiceId = await createTokenizedInvoice(
+        `INV-DEP-FUND-${RUN}`,
+        100_000,
+      );
+
+      currentUser = depositInvestorUser;
+      await request(httpServer)
+        .post('/investor/wallet/deposit')
+        .send({ amount: 100_000 })
+        .expect(201);
+
+      await request(httpServer)
+        .post(`/investor/marketplace/${invoiceId}/fund`)
+        .send({ amount: 80_000 })
+        .expect(201);
+
+      const walletRes = await request(httpServer)
+        .get('/investor/wallet')
+        .expect(200);
+      const expectedBalance = 250_000 + 100_000 - 80_000;
+      expect((walletRes.body as { balance: number }).balance).toBe(
+        expectedBalance,
+      );
+
+      const txns = await prisma.walletTransaction.findMany({
+        where: { investorId: depositInvestorId },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(txns.map((t) => t.type)).toEqual([
+        WalletTransactionType.deposit,
+        WalletTransactionType.deposit,
+        WalletTransactionType.invested,
+      ]);
+      const depositedViaEndpoint = [250_000, 100_000];
+      expect(
+        txns
+          .filter((t) => t.type === WalletTransactionType.deposit)
+          .map((t) => Number(t.amount))
+          .sort((a, b) => a - b),
+      ).toEqual([...depositedViaEndpoint].sort((a, b) => a - b));
+
+      const holding = await prisma.holding.findUniqueOrThrow({
+        where: {
+          investorId_invoiceId: {
+            investorId: depositInvestorId,
+            invoiceId,
+          },
+        },
+      });
+      expect(Number(holding.amount)).toBe(80_000);
     });
   });
 });
