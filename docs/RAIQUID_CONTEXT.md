@@ -248,6 +248,13 @@ knowing before you change the surrounding code.
 - **The `admin` role has no profile table** (unlike `business` / `buyer` /
   `investor`, which each get a 1:1 profile row from the Clerk webhook).
 
+- **`decideWhitelisting` only acts on an `in_review` investor.** Any
+  decision — approve or reject — against an investor at `identity_submitted`
+  (never submitted, or already sent back) or `whitelisted` (already decided)
+  is a `409`. The admin queue lists everyone `!= whitelisted`, so this guard
+  is what stops an operator whitelisting someone straight from
+  `identity_submitted` without KYC docs.
+
 - **`/admin/overview` on-time repayment rate** compares `Invoice.repaidAt`
   (set in `payInvoice`'s transaction) against `dueDate` at **day
   granularity** (`utcDay()`), not exact timestamp — `dueDate` is a

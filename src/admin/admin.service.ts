@@ -194,11 +194,10 @@ export class AdminService {
     if (!investor) {
       throw new NotFoundException('Investor not found');
     }
-    if (
-      dto.approve &&
-      investor.whitelistStatus === WhitelistStatus.whitelisted
-    ) {
-      throw new ConflictException('Investor is already whitelisted');
+    if (investor.whitelistStatus !== WhitelistStatus.in_review) {
+      throw new ConflictException(
+        `Investor is not awaiting a whitelisting decision (status "${investor.whitelistStatus}")`,
+      );
     }
 
     const nextStatus = dto.approve

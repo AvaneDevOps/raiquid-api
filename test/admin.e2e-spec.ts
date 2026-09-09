@@ -366,6 +366,7 @@ describe('Admin (e2e)', () => {
     let pendingInvestorUserId: string;
     let approvedInvestorId: string;
     let alreadyWhitelistedId: string;
+    let neverSubmittedId: string;
 
     beforeAll(async () => {
       const mk = async (tag: string, status: WhitelistStatus) => {
@@ -398,6 +399,10 @@ describe('Admin (e2e)', () => {
       ({ investorId: alreadyWhitelistedId } = await mk(
         'done',
         WhitelistStatus.whitelisted,
+      ));
+      ({ investorId: neverSubmittedId } = await mk(
+        'neversubmitted',
+        WhitelistStatus.identity_submitted,
       ));
     });
 
@@ -492,6 +497,29 @@ describe('Admin (e2e)', () => {
         .post(`/admin/whitelisting/${alreadyWhitelistedId}/decision`)
         .send({ approve: true })
         .expect(409);
+    });
+
+    it('409 for any decision on an investor still at identity_submitted (must submit for review first)', async () => {
+      currentUser = adminUser;
+
+      await request(httpServer)
+        .post(`/admin/whitelisting/${neverSubmittedId}/decision`)
+        .send({ approve: true })
+        .expect(409);
+      await request(httpServer)
+        .post(`/admin/whitelisting/${neverSubmittedId}/decision`)
+        .send({ approve: false })
+        .expect(409);
+
+      const row = await prisma.investor.findUniqueOrThrow({
+        where: { id: neverSubmittedId },
+      });
+      expect(row.whitelistStatus).toBe(WhitelistStatus.identity_submitted);
+
+      const notes = await prisma.notification.findMany({
+        where: { userId: row.userId },
+      });
+      expect(notes).toHaveLength(0);
     });
 
     it('400 when approve is missing from the body', async () => {

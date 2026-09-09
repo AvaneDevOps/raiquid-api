@@ -308,9 +308,12 @@ route.
   `whitelistStatus != whitelisted`, each with its `user` (email, name) and
   `kycDocuments`. Paginated.
 - `POST /admin/whitelisting/:investorId/decision` — `{ approve: boolean, note?: string }`.
+  The investor **must currently be `in_review`** (they've submitted for review).
   Approve → `whitelisted`; reject → `identity_submitted`. `404` for an unknown
-  investor id; `409` if you approve someone who is already `whitelisted`. The
-  investor gets a notification either way; `note` is included in it.
+  investor id. `409` for *any* decision — approve or reject — on an investor at
+  any other status (`identity_submitted`, meaning they never submitted; or
+  `whitelisted`, meaning already decided). The investor gets a notification on a
+  successful decision; `note` is included in it.
 
 ### Notifications (any authenticated user)
 
@@ -366,7 +369,7 @@ responses never leak internals — `message` is just `"Internal server error"`.
 | `401` | No bearer token, or the token is invalid/expired. **Purely a token problem** — re-authenticate. Also returned by the webhook on a bad signature. |
 | `403` | You're authenticated but not allowed: `"User is not provisioned yet"` (local record not created yet — retry), a non-`admin` calling `/admin/*`, or a non-whitelisted investor calling `fund`. **Not a token problem.** |
 | `404` | The thing doesn't exist *or isn't yours* — profile not found, invoice / listing / holding / notification / investor not found, unknown confirm token. |
-| `409` | State conflict — duplicate `invoiceNumber`, invoice already reviewed, invoice not in a fundable/payable state, investor already whitelisted. |
+| `409` | State conflict — duplicate `invoiceNumber`, invoice already reviewed, invoice not in a fundable/payable state, a whitelisting decision on an investor who isn't `in_review`. |
 | `429` | Rate limit — 100 requests per 60 seconds per IP, across all routes. |
 | `500` | Unexpected server error. |
 
