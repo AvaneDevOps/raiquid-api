@@ -48,6 +48,18 @@ describe('Buyer + Confirm (e2e)', () => {
       return { stoId: 'sto-e2e-uuid', txHash: '0xsto' };
     },
   );
+  const whitelistPlatformWalletMock = jest.fn(
+    async ({ invoiceId }: { invoiceId: string }) => {
+      await prisma.onChainEvent.create({
+        data: {
+          action: OnChainAction.whitelist,
+          status: 'confirmed',
+          invoiceId,
+        },
+      });
+      return { txHash: '0xwl' };
+    },
+  );
 
   let currentUser: AuthUser;
   let businessUser: AuthUser;
@@ -79,7 +91,7 @@ describe('Buyer + Confirm (e2e)', () => {
       .useValue({
         tokenizeInvoice: tokenizeInvoiceMock,
         launchOffering: launchOfferingMock,
-        whitelistInvestorWallet: jest.fn(),
+        whitelistPlatformWallet: whitelistPlatformWalletMock,
         invest: jest.fn().mockResolvedValue({ txHash: null }),
         finalizeOffering: jest.fn().mockResolvedValue({
           closeTxHash: null,
@@ -265,6 +277,7 @@ describe('Buyer + Confirm (e2e)', () => {
     beforeEach(() => {
       tokenizeInvoiceMock.mockClear();
       launchOfferingMock.mockClear();
+      whitelistPlatformWalletMock.mockClear();
     });
 
     it('calls tokenizeInvoice then launchOffering and persists the STO fields', async () => {
@@ -305,6 +318,14 @@ describe('Buyer + Confirm (e2e)', () => {
         14 * 60 * 1000,
       );
 
+      expect(whitelistPlatformWalletMock).toHaveBeenCalledTimes(1);
+      expect(
+        whitelistPlatformWalletMock.mock.invocationCallOrder[0],
+      ).toBeGreaterThan(launchOfferingMock.mock.invocationCallOrder[0]);
+      expect(whitelistPlatformWalletMock).toHaveBeenCalledWith(
+        expect.objectContaining({ invoiceId: id, tokenSymbol: expectedSymbol }),
+      );
+
       const row = await prisma.invoice.findUniqueOrThrow({ where: { id } });
       expect(row.status).toBe(InvoiceStatus.tokenized);
       expect(row.brickkenTokenSymbol).toBe(expectedSymbol);
@@ -321,10 +342,11 @@ describe('Buyer + Confirm (e2e)', () => {
       expect(events.map((e) => e.action)).toEqual([
         OnChainAction.newTokenization,
         OnChainAction.newSto,
+        OnChainAction.whitelist,
       ]);
     });
 
-    it('a Brickken failure leaves the invoice tokenized but flagged, not silently on-chain', async () => {
+    it('a tokenize/launch failure flags the invoice with brickkenStoId still null', async () => {
       const { id, confirmToken } = await createInvoice('INV-BKN-FAIL', 45000);
       launchOfferingMock.mockRejectedValueOnce(
         new BrickkenIntegrationError('credits_exhausted', 'no credits left'),
@@ -335,12 +357,35 @@ describe('Buyer + Confirm (e2e)', () => {
         .send({ accept: true })
         .expect(201);
 
+      expect(whitelistPlatformWalletMock).not.toHaveBeenCalled();
       const row = await prisma.invoice.findUniqueOrThrow({ where: { id } });
       expect(row.status).toBe(InvoiceStatus.tokenized);
       expect(row.confirmedAt).not.toBeNull();
       expect(row.brickkenStoId).toBeNull();
       expect(row.brickkenTokenizationError).toContain('credits_exhausted');
       expect(row.brickkenTokenizationError).toContain('no credits left');
+    });
+
+    it('a whitelist failure keeps the STO fields but flags a [whitelist] error', async () => {
+      const { id, confirmToken } = await createInvoice(
+        'INV-BKN-WL-FAIL',
+        30000,
+      );
+      whitelistPlatformWalletMock.mockRejectedValueOnce(
+        new BrickkenIntegrationError('auth', 'wallet not permitted'),
+      );
+
+      await request(httpServer)
+        .post(`/confirm/${confirmToken}/review`)
+        .send({ accept: true })
+        .expect(201);
+
+      const row = await prisma.invoice.findUniqueOrThrow({ where: { id } });
+      expect(row.status).toBe(InvoiceStatus.tokenized);
+      expect(row.brickkenStoId).toBe('sto-e2e-uuid');
+      expect(row.brickkenTokenSymbol).toBe(brickkenTokenSymbol(id));
+      expect(row.brickkenTokenizationError).toContain('[whitelist]');
+      expect(row.brickkenTokenizationError).toContain('wallet not permitted');
     });
   });
 

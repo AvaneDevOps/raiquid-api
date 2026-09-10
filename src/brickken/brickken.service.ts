@@ -1,9 +1,4 @@
-import {
-  Inject,
-  Injectable,
-  Logger,
-  NotImplementedException,
-} from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Brickken, WriteResult } from 'brickken-sdk';
 import { PrismaService } from '../prisma/prisma.service';
@@ -112,10 +107,34 @@ export class BrickkenService {
     return { txHash };
   }
 
-  whitelistInvestorWallet(): never {
-    throw new NotImplementedException(
-      'whitelistInvestorWallet is not wired up — the platform wallet is the sole on-chain investor for now',
+  /**
+   * Whitelists the platform wallet, in its investor role, against one token
+   * symbol. The tokenizer must do this once per new token before any `newInvest`
+   * against it can succeed on-chain.
+   */
+  async whitelistPlatformWallet(input: {
+    invoiceId: string;
+    tokenSymbol: string;
+  }): Promise<{ txHash: string | null }> {
+    const { txHash } = await this.call(
+      OnChainAction.whitelist,
+      input.invoiceId,
+      () =>
+        this.bkn.tokenization.whitelist(
+          {
+            chainId: this.chainId,
+            tokenSymbol: input.tokenSymbol,
+            userToWhitelist: [
+              {
+                investorEmail: this.investorEmail,
+                investorAddress: this.signerAddress,
+              },
+            ],
+          },
+          { execute: true },
+        ),
     );
+    return { txHash };
   }
 
   async launchOffering(

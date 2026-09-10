@@ -22,6 +22,7 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
   let brickken: BrickkenService;
 
   const tokenizationCreate = jest.fn();
+  const tokenizationWhitelist = jest.fn();
   const tokenizationDistributeDividend = jest.fn();
   const stoCreate = jest.fn();
   const stoInvest = jest.fn();
@@ -59,6 +60,7 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
           useValue: {
             tokenization: {
               create: tokenizationCreate,
+              whitelist: tokenizationWhitelist,
               distributeDividend: tokenizationDistributeDividend,
             },
             sto: {
@@ -111,6 +113,7 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
 
   beforeEach(() => {
     tokenizationCreate.mockReset();
+    tokenizationWhitelist.mockReset();
     tokenizationDistributeDividend.mockReset();
     stoCreate.mockReset();
     stoInvest.mockReset();
@@ -226,6 +229,38 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
         endDate: new Date('2027-01-04T00:00:00Z'),
       }),
     ).rejects.toBeInstanceOf(BrickkenIntegrationError);
+  });
+
+  it('whitelistPlatformWallet: confirms a whitelist event for the token symbol', async () => {
+    tokenizationWhitelist.mockResolvedValue(writeResult(hx('w1')));
+
+    const out = await brickken.whitelistPlatformWallet({
+      invoiceId,
+      tokenSymbol: 'RTEST',
+    });
+    expect(out.txHash).toBe(hx('w1'));
+    expect(tokenizationWhitelist).toHaveBeenCalledWith(
+      {
+        chainId: '84532',
+        tokenSymbol: 'RTEST',
+        userToWhitelist: [
+          {
+            investorEmail: process.env.BRICKKEN_INVESTOR_EMAIL,
+            investorAddress: SIGNER,
+          },
+        ],
+      },
+      { execute: true },
+    );
+
+    const event = await prisma.onChainEvent.findFirst({
+      where: {
+        invoiceId,
+        action: OnChainAction.whitelist,
+        status: OnChainStatus.confirmed,
+      },
+    });
+    expect(event?.txHash).toBe(hx('w1'));
   });
 
   it('invest: confirms a newInvest event and passes the platform signer address', async () => {

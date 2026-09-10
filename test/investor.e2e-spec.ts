@@ -113,7 +113,7 @@ describe('Investor + fund flow (e2e)', () => {
         launchOffering: jest
           .fn()
           .mockResolvedValue({ stoId: 'sto-test', txHash: null }),
-        whitelistInvestorWallet: jest.fn(),
+        whitelistPlatformWallet: jest.fn().mockResolvedValue({ txHash: null }),
         invest: investMock,
         finalizeOffering: jest.fn().mockResolvedValue({
           closeTxHash: null,

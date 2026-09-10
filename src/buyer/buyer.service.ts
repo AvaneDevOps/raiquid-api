@@ -27,6 +27,13 @@ import type { UpdateBuyerSettingsDto } from './dto/update-buyer-settings.dto';
 const STO_START_DELAY_MS = 20 * 60 * 1000;
 const STO_WINDOW_MS = 72 * 60 * 60 * 1000;
 
+function describeBrickkenError(err: unknown): string {
+  if (err instanceof BrickkenIntegrationError) {
+    return `[${err.kind}] ${err.message}`;
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
 @Injectable()
 export class BuyerService {
   private readonly logger = new Logger(BuyerService.name);
@@ -260,18 +267,35 @@ export class BuyerService {
         },
       });
     } catch (err) {
-      const message =
-        err instanceof BrickkenIntegrationError
-          ? `[${err.kind}] ${err.message}`
-          : err instanceof Error
-            ? err.message
-            : String(err);
+      const message = describeBrickkenError(err);
       await this.prisma.invoice.update({
         where: { id: invoice.id },
         data: { brickkenTokenizationError: message.slice(0, 500) },
       });
       this.logger.error(
         `Invoice ${invoice.id} accepted but Brickken tokenization did not complete: ${message}`,
+      );
+      return;
+    }
+
+    // tokenization + STO succeeded and the STO fields are persisted. The platform
+    // wallet still has to be whitelisted for this token before any newInvest can
+    // land. A failure here is recorded on brickkenTokenizationError with a
+    // `[whitelist]` prefix; brickkenStoId stays set, so this state is distinct
+    // from a tokenize/launch failure (see docs/RAIQUID_CONTEXT.md).
+    try {
+      await this.brickken.whitelistPlatformWallet({
+        invoiceId: invoice.id,
+        tokenSymbol,
+      });
+    } catch (err) {
+      const message = `[whitelist] ${describeBrickkenError(err)}`;
+      await this.prisma.invoice.update({
+        where: { id: invoice.id },
+        data: { brickkenTokenizationError: message.slice(0, 500) },
+      });
+      this.logger.error(
+        `Invoice ${invoice.id} tokenized and STO launched but platform-wallet whitelisting did not complete: ${message}`,
       );
     }
   }

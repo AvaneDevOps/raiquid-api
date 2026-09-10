@@ -64,6 +64,7 @@ const notStubbed = () =>
 export class Brickken {
   readonly tokenization = {
     create: notStubbed,
+    whitelist: notStubbed,
     distributeDividend: notStubbed,
   };
   readonly sto = {

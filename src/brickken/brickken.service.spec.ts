@@ -1,4 +1,3 @@
-import { NotImplementedException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { Brickken } from 'brickken-sdk';
 import { AuthError, RateLimitError, ValidationError } from 'brickken-sdk';
@@ -211,10 +210,41 @@ describe('BrickkenService', () => {
     );
   });
 
-  it('whitelistInvestorWallet is an explicit stub', () => {
-    const { service } = makeService({});
-    expect(() => service.whitelistInvestorWallet()).toThrow(
-      NotImplementedException,
+  it('whitelistPlatformWallet: whitelists the signer under the investor identity for one token', async () => {
+    const sdkWhitelist = jest.fn().mockResolvedValue({
+      txId: 'tx',
+      executionMode: 'client-signed',
+      transactions: [],
+      raw: {},
+      sent: { transactionHashes: ['0xw1'] },
+    });
+    const { service, create, signerAddress } = makeService({
+      tokenization: {
+        whitelist: sdkWhitelist,
+      } as unknown as Brickken['tokenization'],
+    });
+
+    const out = await service.whitelistPlatformWallet({
+      invoiceId: 'inv-w',
+      tokenSymbol: 'RAAAA',
+    });
+
+    expect(out.txHash).toBe('0xw1');
+    expect(sdkWhitelist).toHaveBeenCalledWith(
+      {
+        chainId: '84532',
+        tokenSymbol: 'RAAAA',
+        userToWhitelist: [
+          {
+            investorEmail: 'investor@raiquid.test',
+            investorAddress: signerAddress,
+          },
+        ],
+      },
+      { execute: true },
+    );
+    expect(create.mock.calls[0][0].data).toEqual(
+      expect.objectContaining({ action: 'whitelist', invoiceId: 'inv-w' }),
     );
   });
 

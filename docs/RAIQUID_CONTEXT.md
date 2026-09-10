@@ -290,7 +290,8 @@ knowing before you change the surrounding code.
 
 The on-chain layer runs through the Brickken Dapp API (`brickken-sdk`,
 `src/brickken/`). Three hooks are wired — buyer acceptance → `newTokenization` +
-`newSto`; investor funding → `newInvest`; admin finalize → `closeOffer` +
+`newSto` + `whitelist` (the platform wallet, as investor, against the new
+token); investor funding → `newInvest`; admin finalize → `closeOffer` +
 `claimTokens` + `dividendDistribution` — and every test mocks `BrickkenService`
 or the `BRICKKEN_CLIENT` provider. No test makes a live call. Live verification
 against the sandbox waits on Brickken confirming our wallet registration.
@@ -382,17 +383,33 @@ against the sandbox waits on Brickken confirming our wallet registration.
   which is the best single figure available at finalize time but is itself an
   assumption about what "distribute dividends" means here.
 
-- **How a Brickken failure surfaces.** `tokenizeAndLaunchOffering` runs *after*
-  the transaction that sets `tokenized` + `confirmedAt` + the notification —
-  those are the durable outcome of the buyer accepting, and an external call
-  that can fail must not hold a DB transaction open or roll them back. On
-  failure the invoice keeps `status = tokenized` but gets
-  `brickkenTokenizationError` set to the mapped error (`[kind] message`), and
-  `brickkenStoId` stays null. So: **`status = tokenized` AND `brickkenStoId IS
-  NULL` AND `brickkenTokenizationError IS NOT NULL` means the invoice was
-  accepted but never made it on-chain.** Every Brickken call also writes an
-  `OnChainEvent` row (`pending` → `confirmed` / `failed`). A crash between the
-  commit and the Brickken call leaves `brickkenStoId` null with *no* error —
+  **Known cross-dependency:** `dividendDistribution` currently passes
+  `invoice.fundedAmount` as a placeholder. The real payout is discount-based
+  (investors earn the spread between what they funded and the invoice face
+  value), and computing it needs the investor-return / pricing model that is
+  still an open decision (see "Repayment fan-out is principal-only" and
+  "Investor fee model is unmodeled" above). Neither side is wrong on its own —
+  this line is here so the two are changed together when the pricing work lands.
+
+- **How a tokenization-lifecycle failure surfaces.** `tokenizeAndLaunchOffering`
+  runs *after* the transaction that sets `tokenized` + `confirmedAt` + the
+  notification — those are the durable outcome of the buyer accepting, and an
+  external call that can fail must not hold a DB transaction open or roll them
+  back. It does three Brickken calls in order — `tokenizeInvoice`,
+  `launchOffering`, then `whitelistPlatformWallet` — and the single
+  `brickkenTokenizationError` string carries whichever one failed, distinguished
+  by `brickkenStoId`:
+  - **`brickkenStoId IS NULL` + `brickkenTokenizationError IS NOT NULL`** —
+    `tokenizeInvoice` or `launchOffering` failed; the invoice never got an STO.
+    The STO fields are only persisted once both succeed.
+  - **`brickkenStoId IS NOT NULL` + `brickkenTokenizationError` starts
+    `[whitelist]`** — token + STO exist, but the platform wallet is not
+    whitelisted for the token, so every `newInvest` against it will revert until
+    an operator re-runs the whitelist step. This is the state this hook is
+    designed to make visible rather than let it become a live surprise.
+  A clean run leaves `brickkenTokenizationError` null. Every Brickken call also
+  writes an `OnChainEvent` row (`pending` → `confirmed` / `failed`). A crash
+  between the commit and the calls leaves `brickkenStoId` null with *no* error —
   a future reconciliation job keyed on that plus `updatedAt` age can re-drive it.
 
 - **Assumptions to confirm against the live sandbox** (all one-line changes if
@@ -400,8 +417,10 @@ against the sandbox waits on Brickken confirming our wallet registration.
   `newSto`'s STO id is read from `result.info` / `result.raw` under one of
   `stoId` / `offeringId` / `id` / `uuid` (a successful `newSto` with no id in
   the response is treated as a failure); `tokenType` is `BILL_FACTORING`; the
-  `newSto` amount parameters (see the dedicated bullet above); `newInvest` is
-  made by the platform wallet with `BRICKKEN_INVESTOR_EMAIL` +
+  `newSto` amount parameters (see the dedicated bullet above); the `whitelist`
+  call passes `userToWhitelist: [{ investorEmail, investorAddress }]` for the
+  platform wallet (the exact entry shape is a guess against `unknown[]`);
+  `newInvest` is made by the platform wallet with `BRICKKEN_INVESTOR_EMAIL` +
   `investmentAmount` as a human-readable string; `claimTokens` claims to the
   same platform wallet; `dividendDistribution` amount is `fundedAmount`;
   a tx hash is read from `result.sent.transactionHashes[0]`. The invoice

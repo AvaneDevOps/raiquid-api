@@ -68,7 +68,7 @@ describe('BusinessController (e2e)', () => {
         launchOffering: jest
           .fn()
           .mockResolvedValue({ stoId: 'sto-test', txHash: null }),
-        whitelistInvestorWallet: jest.fn(),
+        whitelistPlatformWallet: jest.fn().mockResolvedValue({ txHash: null }),
         invest: jest.fn().mockResolvedValue({ txHash: null }),
         finalizeOffering: jest.fn().mockResolvedValue({
           closeTxHash: null,
