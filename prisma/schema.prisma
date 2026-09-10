@@ -301,7 +301,10 @@ model OnChainEvent {
   status        OnChainStatus @default(pending)
   txHash        String?       @unique
   blockNumber   BigInt?
-  chainId       Int           @default(84532) // Base Sepolia
+  // Legacy column default; every row BrickkenService writes sets chainId
+  // explicitly from BRICKKEN_CHAIN_ID (now Ethereum Sepolia, 11155111), so this
+  // fallback is never actually used. Not worth a migration to change.
+  chainId       Int           @default(84532)
   // Loose links; on-chain identifiers may arrive before the off-chain row.
   invoiceId     String?
   invoice       Invoice?      @relation(fields: [invoiceId], references: [id])

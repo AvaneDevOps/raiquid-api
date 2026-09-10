@@ -315,6 +315,17 @@ against the sandbox waits on Brickken confirming our wallet registration.
   boot until they're set in the Railway environment; a throwaway-but-valid
   private key (`0x$(openssl rand -hex 32)`) is fine until live calls are on.
 
+- **Target network — Ethereum Sepolia (`11155111`).** `BRICKKEN_CHAIN_ID`
+  defaults to `11155111` and flows through as the `chainId` parameter on every
+  Brickken call (`BrickkenService` reads it once; nothing hardcodes a network).
+  This was **switched, deliberately, from Base Sepolia (`84532`)** after the
+  first live probes: Base Sepolia faucets were unreliable, Ethereum Sepolia is
+  Brickken's own documented example network, and the platform signing wallet
+  already holds real Ethereum Sepolia ETH (client-signed writes mean the wallet
+  pays its own gas). `OnChainEvent.chainId` still has a legacy column default of
+  `84532`, but `BrickkenService` always sets `chainId` explicitly so that
+  fallback is never used — not worth a migration.
+
 - **Token symbol derivation.** `brickkenTokenSymbol(invoiceId)` →
   `"R"` + four `[A-Z]` characters, each `sha256(invoiceId)[i] % 26`. Five
   characters total, always letters, always starting `R` (Raiquid). This fits
@@ -422,10 +433,27 @@ against the sandbox waits on Brickken confirming our wallet registration.
   platform wallet (the exact entry shape is a guess against `unknown[]`);
   `newInvest` is made by the platform wallet with `BRICKKEN_INVESTOR_EMAIL` +
   `investmentAmount` as a human-readable string; `claimTokens` claims to the
-  same platform wallet; `dividendDistribution` amount is `fundedAmount`;
-  a tx hash is read from `result.sent.transactionHashes[0]`. The invoice
-  currency is `NGN` by default while Brickken's raise fields are named `USD` —
-  currency handling is unresolved and belongs in the live follow-up.
+  same platform wallet; `dividendDistribution` amount is `fundedAmount`. The
+  invoice currency is `NGN` by default while Brickken's raise fields are named
+  `USD` — currency handling is unresolved and belongs in the live follow-up.
+
+- **`sent.transactionHashes` is `[txHash, r, s]` — confirmed live.** A successful
+  `newTokenization` on Ethereum Sepolia returned a three-element
+  `sent.transactionHashes` where index 0 is the real tx hash and indices 1–2 are
+  the transaction's `r` and `s` signature components (they match
+  `sent.raw.results[0].result.txResponses[0].r`/`.s` exactly). `BrickkenService`
+  reads index 0 for `txHash` and now persists only `[txHash]` into
+  `OnChainEvent.rawPayload.transactionHashes`.
+
+- **`BRICKKEN_ACCEPTED_COIN` — the real sandbox value is known but not yet wired.**
+  A live `get-tokenizer-info` after tokenization returned
+  `paymentTokenAddress: 0x28d2B01854D0aBec267a3DDcad9163580E6E8604` and
+  `escrowAddress: 0x2b7499fAd040dF014957b322e654EB94fBE6f92B` on Ethereum
+  Sepolia. An `eth_call` to that payment-token address decoded as
+  `symbol() = "USDT"`, `name() = "Fake USDT"`, `decimals() = 6` — Brickken's
+  sandbox test USDT. `BRICKKEN_ACCEPTED_COIN` in `.env` is still the
+  `0x…0001` placeholder; swap it for `0x28d2B0…8604` (and use 6 decimals when
+  scaling `newSto` / `newInvest` amounts) once `launchOffering` is probed live.
 
 - **`brickken-sdk` audit.** `brickken-sdk@0.2.1` has one runtime dependency,
   `micro-eth-signer` (pure JS, no advisories); `ethers` / `viem` are optional

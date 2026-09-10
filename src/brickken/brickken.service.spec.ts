@@ -6,7 +6,12 @@ import { BrickkenIntegrationError } from './brickken.errors';
 import type { PrismaService } from '../prisma/prisma.service';
 import { OnChainStatus } from '../common/enums';
 
-type EventRow = { id: string; status: string; txHash: string | null };
+type EventRow = {
+  id: string;
+  status: string;
+  txHash: string | null;
+  rawPayload?: unknown;
+};
 
 const SIGNER_ADDRESS = '0x000000000000000000000000000000000000d00d';
 // Every write call is asserted with these options; signerAddress is required by
@@ -35,6 +40,7 @@ function makeService(bkn: Partial<Brickken>) {
       const row = events.find((e) => e.id === where.id)!;
       if (typeof data.status === 'string') row.status = data.status;
       if ('txHash' in data) row.txHash = (data.txHash as string) ?? null;
+      if ('rawPayload' in data) row.rawPayload = data.rawPayload;
       return Promise.resolve(row);
     },
   );
@@ -45,7 +51,7 @@ function makeService(bkn: Partial<Brickken>) {
   const config = {
     get: (key: string) =>
       ({
-        BRICKKEN_CHAIN_ID: '84532',
+        BRICKKEN_CHAIN_ID: '11155111',
         BRICKKEN_TOKENIZER_EMAIL: 'tokenizer@raiquid.test',
         BRICKKEN_INVESTOR_EMAIL: 'investor@raiquid.test',
         BRICKKEN_ACCEPTED_COIN: '0x0000000000000000000000000000000000000000',
@@ -60,19 +66,26 @@ function makeService(bkn: Partial<Brickken>) {
       SIGNER_ADDRESS,
     ),
     create,
+    update,
     events,
     signerAddress: SIGNER_ADDRESS,
   };
 }
 
 describe('BrickkenService', () => {
-  it('writes a pending OnChainEvent, then confirms it with the tx hash on success', async () => {
+  it('confirms the event and stores only the real tx hash (not the r/s from the [hash, r, s] array)', async () => {
+    // Live sandbox responses put transactionHashes = [txHash, r, s] — indices 1
+    // and 2 are the transaction's signature components, not more hashes.
+    const R_SIG =
+      '0xbd6cc7e8dcc5d2249028a45c12e8dd37853944bdd6d9301c46fc2204a8590a4b';
+    const S_SIG =
+      '0x6a01d0c904980f49eab12868ca390e8286025d0bd1adf1a7adfdb03cd5bdb74c';
     const sdkCreate = jest.fn().mockResolvedValue({
       txId: 'tx-1',
       executionMode: 'client-signed',
       transactions: [],
       raw: {},
-      sent: { transactionHashes: ['0xdeadbeef'] },
+      sent: { transactionHashes: ['0xdeadbeef', R_SIG, S_SIG] },
     });
     const { service, create, events } = makeService({
       tokenization: {
@@ -92,7 +105,7 @@ describe('BrickkenService', () => {
       expect.objectContaining({
         tokenSymbol: 'RABCD',
         tokenType: 'BILL_FACTORING',
-        chainId: '84532',
+        chainId: '11155111',
         tokenizerEmail: 'tokenizer@raiquid.test',
         supplyCap: '100000',
       }),
@@ -103,11 +116,20 @@ describe('BrickkenService', () => {
         action: 'newTokenization',
         status: OnChainStatus.pending,
         invoiceId: 'inv-1',
-        chainId: 84532,
+        chainId: 11155111,
       }),
     );
     expect(events).toEqual([
-      { id: 'evt-1', status: OnChainStatus.confirmed, txHash: '0xdeadbeef' },
+      {
+        id: 'evt-1',
+        status: OnChainStatus.confirmed,
+        txHash: '0xdeadbeef',
+        rawPayload: {
+          txId: 'tx-1',
+          executionMode: 'client-signed',
+          transactionHashes: ['0xdeadbeef'],
+        },
+      },
     ]);
   });
 
@@ -235,7 +257,7 @@ describe('BrickkenService', () => {
     expect(out.txHash).toBe('0xw1');
     expect(sdkWhitelist).toHaveBeenCalledWith(
       {
-        chainId: '84532',
+        chainId: '11155111',
         tokenSymbol: 'RAAAA',
         userToWhitelist: [
           {
@@ -272,7 +294,7 @@ describe('BrickkenService', () => {
     expect(out.txHash).toBe('0xfeed');
     expect(sdkInvest).toHaveBeenCalledWith(
       {
-        chainId: '84532',
+        chainId: '11155111',
         tokenSymbol: 'RAAAA',
         investorEmail: 'investor@raiquid.test',
         investorAddress: signerAddress,
@@ -283,7 +305,7 @@ describe('BrickkenService', () => {
     expect(create.mock.calls[0][0].data).toEqual(
       expect.objectContaining({ action: 'newInvest', invoiceId: 'inv-9' }),
     );
-    expect(events[0]).toEqual({
+    expect(events[0]).toMatchObject({
       id: 'evt-1',
       status: OnChainStatus.confirmed,
       txHash: '0xfeed',
@@ -321,7 +343,7 @@ describe('BrickkenService', () => {
       dividendTxHash: '0x03',
     });
     expect(distributeDividend).toHaveBeenCalledWith(
-      { chainId: '84532', tokenSymbol: 'RAAAA', amount: '60000' },
+      { chainId: '11155111', tokenSymbol: 'RAAAA', amount: '60000' },
       WRITE_OPTS,
     );
     expect(close.mock.invocationCallOrder[0]).toBeLessThan(

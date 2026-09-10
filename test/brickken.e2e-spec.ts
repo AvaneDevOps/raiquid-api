@@ -121,13 +121,14 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
     stoClaim.mockReset();
   });
 
-  it('writes a pending OnChainEvent, then confirms it with the tx hash', async () => {
+  it('confirms the event and persists only the real tx hash from [hash, r, s]', async () => {
     tokenizationCreate.mockResolvedValue({
       txId: 'tx-ok',
       executionMode: 'client-signed',
       transactions: [],
       raw: {},
-      sent: { transactionHashes: [hx('c0ffee')] },
+      // [txHash, r, s] — Brickken returns the signature components at 1 and 2.
+      sent: { transactionHashes: [hx('c0ffee'), hx('rSig'), hx('sSig')] },
     });
 
     const result = await brickken.tokenizeInvoice({
@@ -145,7 +146,10 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
     expect(events[0]).toMatchObject({
       status: OnChainStatus.confirmed,
       txHash: hx('c0ffee'),
-      chainId: 84532,
+      chainId: 11155111,
+    });
+    expect(events[0].rawPayload).toMatchObject({
+      transactionHashes: [hx('c0ffee')],
     });
   });
 
@@ -241,7 +245,7 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
     expect(out.txHash).toBe(hx('w1'));
     expect(tokenizationWhitelist).toHaveBeenCalledWith(
       {
-        chainId: '84532',
+        chainId: '11155111',
         tokenSymbol: 'RTEST',
         userToWhitelist: [
           {

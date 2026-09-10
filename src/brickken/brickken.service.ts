@@ -288,7 +288,10 @@ export class BrickkenService {
           rawPayload: {
             txId: result.txId,
             executionMode: result.executionMode,
-            transactionHashes: result.sent?.transactionHashes ?? [],
+            // Only index 0 is the tx hash. Brickken's sandbox response puts the
+            // transaction's r and s signature components at indices 1 and 2, not
+            // further hashes (confirmed against a live sandbox response).
+            transactionHashes: txHash ? [txHash] : [],
           },
         },
       });

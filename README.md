@@ -116,7 +116,8 @@ the process exits if any is missing or malformed. See
 `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `RESEND_API_KEY`, `BRICKKEN_API_KEY`,
 `BRICKKEN_PRIVATE_KEY`, `BRICKKEN_TOKENIZER_EMAIL`, `BRICKKEN_INVESTOR_EMAIL`
 (must differ from the tokenizer email), `BRICKKEN_ACCEPTED_COIN`,
-`BRICKKEN_ENV` (default `sandbox`), `BRICKKEN_CHAIN_ID` (default `84532`).
+`BRICKKEN_ENV` (default `sandbox`), `BRICKKEN_CHAIN_ID` (default `11155111`,
+Ethereum Sepolia).
 
 > Prisma 7 note: `DATABASE_URL` is **not** read from `schema.prisma` anymore.
 > It lives in [`prisma.config.ts`](prisma.config.ts) for the CLI, and the app

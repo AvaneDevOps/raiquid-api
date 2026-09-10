@@ -28,10 +28,10 @@ describe('validateEnv', () => {
     expect(env.NODE_ENV).toBe('test');
   });
 
-  it('defaults BRICKKEN_ENV to sandbox and BRICKKEN_CHAIN_ID to Base Sepolia', () => {
+  it('defaults BRICKKEN_ENV to sandbox and BRICKKEN_CHAIN_ID to Ethereum Sepolia', () => {
     const env = validateEnv(base);
     expect(env.BRICKKEN_ENV).toBe('sandbox');
-    expect(env.BRICKKEN_CHAIN_ID).toBe('84532');
+    expect(env.BRICKKEN_CHAIN_ID).toBe('11155111');
   });
 
   it('rejects a BRICKKEN_PRIVATE_KEY that is not a 32-byte hex string', () => {

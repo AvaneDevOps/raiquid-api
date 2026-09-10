@@ -39,7 +39,10 @@ export const envSchema = z
     BRICKKEN_INVESTOR_EMAIL: z.string().email(),
     BRICKKEN_ACCEPTED_COIN: z.string().min(1),
     BRICKKEN_ENV: z.enum(['sandbox', 'production']).default('sandbox'),
-    BRICKKEN_CHAIN_ID: z.string().min(1).default('84532'),
+    // Ethereum Sepolia (11155111). Switched off Base Sepolia (84532): its
+    // faucets were unreliable, Ethereum Sepolia is Brickken's own documented
+    // example network, and the platform wallet already holds Sepolia ETH.
+    BRICKKEN_CHAIN_ID: z.string().min(1).default('11155111'),
   })
   .refine(
     (env) => env.BRICKKEN_INVESTOR_EMAIL !== env.BRICKKEN_TOKENIZER_EMAIL,
