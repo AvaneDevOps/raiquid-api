@@ -113,7 +113,9 @@ the process exits if any is missing or malformed. See
 
 `NODE_ENV`, `PORT`, `DATABASE_URL`, `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY`,
 `CLERK_WEBHOOK_SECRET`, `FRONTEND_URL`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
-`R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `RESEND_API_KEY`.
+`R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `RESEND_API_KEY`, `BRICKKEN_API_KEY`,
+`BRICKKEN_PRIVATE_KEY`, `BRICKKEN_TOKENIZER_EMAIL`, `BRICKKEN_ACCEPTED_COIN`,
+`BRICKKEN_ENV` (default `sandbox`), `BRICKKEN_CHAIN_ID` (default `84532`).
 
 > Prisma 7 note: `DATABASE_URL` is **not** read from `schema.prisma` anymore.
 > It lives in [`prisma.config.ts`](prisma.config.ts) for the CLI, and the app

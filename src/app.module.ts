@@ -13,6 +13,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { StorageModule } from './storage/storage.module';
 import { EmailModule } from './email/email.module';
+import { BrickkenModule } from './brickken/brickken.module';
 import { HealthModule } from './health/health.module';
 
 import { BusinessModule } from './business/business.module';
@@ -43,6 +44,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     AuthModule,
     StorageModule,
     EmailModule,
+    BrickkenModule,
     HealthModule,
     WebhooksModule,
 

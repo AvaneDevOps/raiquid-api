@@ -81,12 +81,17 @@ learned from the frontend, and behavioural details that would otherwise be a
   rejects (403) unless `whitelistStatus === whitelisted`. Recording this
   because it's a deliberate asymmetry, not an oversight.
 
-- **`Holding.tokenUnits` is a placeholder.** On funding, `tokenUnits` is
-  set equal to the invested `amount`. Real on-chain unit accounting (how
-  many invoice tokens a given ₦ amount buys) comes from the separate
-  minting service, which doesn't exist here. Once it does, `tokenUnits`
-  should be populated from the actual mint/transfer event, not mirrored
-  from the fiat amount.
+- **`Holding.tokenUnits` is our own bookkeeping and can never come from
+  Brickken.** On funding it is set equal to the invested `amount`, and
+  that is not a placeholder waiting on a "minting service" — there is no
+  on-chain source for it. Brickken's STO has exactly one on-chain
+  investor: the platform wallet, which invests the whole raise in a
+  single `newInvest`. Brickken has no concept of the individual retail
+  investors funding an invoice through `POST /investor/marketplace/:id/fund`,
+  so it cannot report per-investor token units. `Holding.tokenUnits` is
+  the platform's internal proportional split of the STO's tokens across
+  those retail holders; keep it as a proportional figure derived from
+  `amount`, refined only if the split rule itself changes (e.g. fees).
 
 - **KYC upload isn't verified.** `POST /investor/whitelisting/upload-url`
   returns a presigned R2 PUT URL. The object key is generated server-side
@@ -280,10 +285,80 @@ knowing before you change the surrounding code.
   relies on `--runInBand` and on the spec running after the others'
   teardown; don't parallelize the e2e suites.
 
+## Brickken integration
+
+The on-chain layer runs through the Brickken Dapp API (`brickken-sdk`,
+`src/brickken/`). This is the **foundation only** — the client is wrapped, the
+schema is real, one hook is wired (buyer acceptance → tokenize + launch STO),
+and every test mocks `BrickkenService`. Live verification against the sandbox
+waits on Brickken confirming our wallet registration.
+
+- **Config.** `BRICKKEN_API_KEY` + `BRICKKEN_PRIVATE_KEY` (a whitelisted 32-byte
+  hex signing wallet) are the two credentials; Dapp writes run `client-signed`
+  (we sign locally, Brickken broadcasts), so both are needed. The task named
+  four vars; two more were unavoidable because the SDK's `newTokenization` /
+  `newSto` inputs require them: `BRICKKEN_TOKENIZER_EMAIL` (must match the email
+  tied to the API key) and `BRICKKEN_ACCEPTED_COIN` (the STO payment-token
+  address on-chain). `BRICKKEN_PRIVATE_KEY` is treated with the same care as
+  `CLERK_SECRET_KEY` — never logged, and `BrickkenClientProvider` is the only
+  place it's read. All six are required (same zod pattern as every other
+  credential), so the deployed app will not boot until they're set in the
+  Railway environment; a throwaway-but-valid private key
+  (`0x$(openssl rand -hex 32)`) is fine until live calls are switched on.
+
+- **Token symbol derivation.** `brickkenTokenSymbol(invoiceId)` →
+  `"R"` + four `[A-Z]` characters, each `sha256(invoiceId)[i] % 26`. Five
+  characters total, always letters, always starting `R` (Raiquid). This fits
+  Brickken's 2–5 character rule and is derived from the invoice's DB `id`
+  (globally unique) rather than its `invoiceNumber` (only unique per business).
+  `Invoice.brickkenTokenSymbol` is `@unique`, so the only way two invoices can
+  clash is a hash collision in the 26⁴ ≈ 457k space — which surfaces as a unique
+  constraint error on the success write, lands that invoice in the
+  `brickkenTokenizationError` state, and never silently double-tokenizes. Add a
+  disambiguating suffix if a collision is ever actually seen.
+
+- **STO window.** `startDate` = now + **20 minutes** (Brickken checks `startDate`
+  at mine time, not prepare time, and warns to buffer generously; 20 min covers
+  the 15-min minimum plus the SDK's 60s clock-skew allowance plus prepare/mine
+  latency). `endDate` = `startDate` + **72 hours**, stored on
+  `Invoice.brickkenStoEndsAt`. 72h gives the off-chain marketplace time to fully
+  fund the invoice through `POST /investor/marketplace/:id/fund` before the
+  platform wallet makes its single `newInvest` and the offer is closed. Revisit
+  once the fund → `newInvest` → `closeOffer`/`claimTokens` hooks are wired.
+
+- **How a Brickken failure surfaces.** `tokenizeAndLaunchOffering` runs *after*
+  the transaction that sets `tokenized` + `confirmedAt` + the notification —
+  those are the durable outcome of the buyer accepting, and an external call
+  that can fail must not hold a DB transaction open or roll them back. On
+  failure the invoice keeps `status = tokenized` but gets
+  `brickkenTokenizationError` set to the mapped error (`[kind] message`), and
+  `brickkenStoId` stays null. So: **`status = tokenized` AND `brickkenStoId IS
+  NULL` AND `brickkenTokenizationError IS NOT NULL` means the invoice was
+  accepted but never made it on-chain.** Every Brickken call also writes an
+  `OnChainEvent` row (`pending` → `confirmed` / `failed`). A crash between the
+  commit and the Brickken call leaves `brickkenStoId` null with *no* error —
+  a future reconciliation job keyed on that plus `updatedAt` age can re-drive it.
+
+- **Assumptions to confirm against the live sandbox** (all one-line changes if
+  wrong): STO `startDate` / `endDate` are passed as **Unix-seconds strings**;
+  `newSto`'s STO id is read from `result.info` / `result.raw` under one of
+  `stoId` / `offeringId` / `id` / `uuid` (a successful `newSto` with no id in
+  the response is treated as a failure); `tokenType` is `BILL_FACTORING`;
+  `tokenAmount` / `minRaiseUSD` / `maxRaiseUSD` / `maxInvestment` are all the
+  invoice `amount` and `minInvestment` is `"1"`. The invoice currency is `NGN`
+  by default while Brickken's raise fields are named `USD` — currency handling
+  is unresolved and belongs in the live follow-up.
+
+- **`brickken-sdk` audit.** `brickken-sdk@0.2.1` has one runtime dependency,
+  `micro-eth-signer` (pure JS, no advisories); `ethers` / `viem` are optional
+  peers and not installed. It adds nothing to `npm audit`.
+
 ## Accepted npm audit findings
 
-`npm audit` reports 4 high-severity findings (`mysql2`, `deepmerge-ts`).
-Both come in only through the `prisma` CLI package:
+`npm audit` reports high-severity findings in two dependency chains, neither
+introduced by application code:
+
+The `prisma` CLI chain (`mysql2`, `deepmerge-ts` via `@prisma/config`):
 
 - `prisma` is a **devDependency**. It bundles a driver for every database
   Prisma supports (`mysql2`, `postgres`, `better-sqlite3`, …) so CLI
@@ -303,3 +378,12 @@ Both come in only through the `prisma` CLI package:
 regression from 7.10.0 — rejected. **Revisit** when bumping Prisma majors
 (the CLI may drop `mysql2` or ship a patched version), or if `prisma` /
 `@prisma/config` ever becomes an actual runtime import.
+
+The `multer` chain (via `@nestjs/platform-express` → `@nestjs/core`): a set of
+DoS advisories against `multer <=2.2.0`. `@nestjs/platform-express` bundles
+`multer` for `@UploadedFile()` handling. This API defines **no** file-upload
+routes — KYC documents are PUT straight to R2 via presigned URLs and never
+touch this process — so the parsers the advisories target are never reached.
+Pre-dates the Brickken work; the advisories were published against a version
+range that already covered our transitive `multer`. **Revisit** on the next
+`@nestjs/*` major bump, which is expected to pull `multer >= 2.2.1`.

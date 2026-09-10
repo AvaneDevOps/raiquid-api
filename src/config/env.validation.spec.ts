@@ -13,6 +13,11 @@ const base = {
   R2_SECRET_ACCESS_KEY: 'secret',
   R2_BUCKET_NAME: 'bucket',
   RESEND_API_KEY: 're_x',
+  BRICKKEN_API_KEY: 'bk_x',
+  BRICKKEN_PRIVATE_KEY:
+    '0x0000000000000000000000000000000000000000000000000000000000000001',
+  BRICKKEN_TOKENIZER_EMAIL: 'tokenizer@raiquid.test',
+  BRICKKEN_ACCEPTED_COIN: '0x0000000000000000000000000000000000000000',
 };
 
 describe('validateEnv', () => {
@@ -20,6 +25,18 @@ describe('validateEnv', () => {
     const env = validateEnv(base);
     expect(env.PORT).toBe(3000);
     expect(env.NODE_ENV).toBe('test');
+  });
+
+  it('defaults BRICKKEN_ENV to sandbox and BRICKKEN_CHAIN_ID to Base Sepolia', () => {
+    const env = validateEnv(base);
+    expect(env.BRICKKEN_ENV).toBe('sandbox');
+    expect(env.BRICKKEN_CHAIN_ID).toBe('84532');
+  });
+
+  it('rejects a BRICKKEN_PRIVATE_KEY that is not a 32-byte hex string', () => {
+    expect(() =>
+      validateEnv({ ...base, BRICKKEN_PRIVATE_KEY: 'not-a-key' }),
+    ).toThrow(/BRICKKEN_PRIVATE_KEY/);
   });
 
   it('throws when a required variable is missing', () => {

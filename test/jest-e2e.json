@@ -8,6 +8,8 @@
   },
   "setupFiles": ["<rootDir>/setup-env.ts"],
   "moduleNameMapper": {
+    "^brickken-sdk/adapters/private-key$": "<rootDir>/mocks/brickken-sdk-private-key.ts",
+    "^brickken-sdk$": "<rootDir>/mocks/brickken-sdk.ts",
     "^(\\.{1,2}/.*)\\.js$": "$1"
   }
 }

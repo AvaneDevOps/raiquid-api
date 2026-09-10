@@ -4,10 +4,10 @@
 // frontend. The enum values below are used verbatim by both apps, so do not
 // rename them without coordinating the change on both sides.
 //
-// NOTE: on-chain interaction (minting / whitelisting / transfers / burns on
-// Base Sepolia via Brickken) is handled by a separate service. `OnChainEvent`
-// is a read/mirror table only: rows are written by that other service and this
-// API just reads them for the admin ledger UI.
+// NOTE: on-chain interaction runs through the Brickken Dapp API (see
+// src/brickken/). `OnChainEvent` rows are written by src/brickken/brickken.service.ts
+// — one per Brickken call attempt — and surfaced in the admin ledger UI. On-chain
+// settlement itself is Brickken's; the platform wallet is the sole signer.
 
 generator client {
   provider = "prisma-client"
@@ -65,11 +65,17 @@ enum WalletTransactionType {
   repayment
 }
 
+// Brickken Dapp API method names (POST /prepare-transactions `method`). A row is
+// written per call attempt by src/brickken/brickken.service.ts.
 enum OnChainAction {
-  mint
+  newTokenization
   whitelist
-  transfer
-  burn
+  mintToken
+  newSto
+  newInvest
+  closeOffer
+  claimTokens
+  dividendDistribution
 }
 
 enum OnChainStatus {
@@ -193,29 +199,36 @@ model KycDocument {
 /// An invoice submitted by a Business, owed by a Buyer, that progresses through
 /// tokenization and funding. Central entity for every dashboard.
 model Invoice {
-  id                     String        @id @default(cuid())
-  invoiceNumber          String
-  businessId             String
-  business               Business      @relation(fields: [businessId], references: [id])
-  buyerId                String
-  buyer                  Buyer         @relation(fields: [buyerId], references: [id])
-  description            String?
-  amount                 Decimal       @db.Decimal(18, 2)
-  currency               String        @default("NGN")
-  issueDate              DateTime      @default(now())
-  dueDate                DateTime
-  status                 InvoiceStatus @default(submitted)
+  id                        String        @id @default(cuid())
+  invoiceNumber             String
+  businessId                String
+  business                  Business      @relation(fields: [businessId], references: [id])
+  buyerId                   String
+  buyer                     Buyer         @relation(fields: [buyerId], references: [id])
+  description               String?
+  amount                    Decimal       @db.Decimal(18, 2)
+  currency                  String        @default("NGN")
+  issueDate                 DateTime      @default(now())
+  dueDate                   DateTime
+  status                    InvoiceStatus @default(submitted)
   // Economics, expressed as percentages (e.g. 2.5 == 2.5%).
-  platformFeePct         Decimal       @default(0) @db.Decimal(5, 2)
-  reserveContributionPct Decimal       @default(0) @db.Decimal(5, 2)
-  fundedAmount           Decimal       @default(0) @db.Decimal(18, 2)
+  platformFeePct            Decimal       @default(0) @db.Decimal(5, 2)
+  reserveContributionPct    Decimal       @default(0) @db.Decimal(5, 2)
+  fundedAmount              Decimal       @default(0) @db.Decimal(18, 2)
   // Magic-link confirm flow (public GET /confirm/:invoiceId).
-  confirmToken           String?       @unique
-  confirmedAt            DateTime?
+  confirmToken              String?       @unique
+  confirmedAt               DateTime?
   // Set once, in the same transaction that flips status to `repaid`.
-  repaidAt               DateTime?
-  createdAt              DateTime      @default(now())
-  updatedAt              DateTime      @updatedAt
+  repaidAt                  DateTime?
+  // Brickken on-chain representation, written after buyer acceptance. A
+  // `tokenized` invoice with a null brickkenStoId and a set
+  // brickkenTokenizationError never made it on-chain — see docs/RAIQUID_CONTEXT.md.
+  brickkenTokenSymbol       String?       @unique
+  brickkenStoId             String?
+  brickkenStoEndsAt         DateTime?
+  brickkenTokenizationError String?
+  createdAt                 DateTime      @default(now())
+  updatedAt                 DateTime      @updatedAt
 
   holdings           Holding[]
   walletTransactions WalletTransaction[]
@@ -269,12 +282,12 @@ model WalletTransaction {
 }
 
 // ---------------------------------------------------------------------------
-// On-chain mirror (read-only in this API — see file header)
+// On-chain event log (written per Brickken call — see file header)
 // ---------------------------------------------------------------------------
 
-/// Mirror of an on-chain action performed by the separate web3 service.
-/// Rows here are never written by business logic in this API; they are
-/// ingested from chain events and surfaced in GET /admin/ledger.
+/// One row per Brickken Dapp API call attempt, written by
+/// src/brickken/brickken.service.ts: `pending` before the call, then `confirmed`
+/// or `failed`. Surfaced in GET /admin/ledger.
 model OnChainEvent {
   id            String        @id @default(cuid())
   action        OnChainAction

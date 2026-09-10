@@ -1,0 +1,1 @@
+export const BRICKKEN_CLIENT = 'BRICKKEN_CLIENT';

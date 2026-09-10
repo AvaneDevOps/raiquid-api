@@ -11,3 +11,9 @@ process.env.R2_ACCESS_KEY_ID ??= 'e2e-dummy-key';
 process.env.R2_SECRET_ACCESS_KEY ??= 'e2e-dummy-secret';
 process.env.R2_BUCKET_NAME ??= 'e2e-dummy-bucket';
 process.env.RESEND_API_KEY ??= 're_e2e_dummy';
+process.env.BRICKKEN_API_KEY ??= 'bk_e2e_dummy';
+process.env.BRICKKEN_PRIVATE_KEY ??=
+  '0x0000000000000000000000000000000000000000000000000000000000000001';
+process.env.BRICKKEN_TOKENIZER_EMAIL ??= 'tokenizer-e2e@raiquid.test';
+process.env.BRICKKEN_ACCEPTED_COIN ??=
+  '0x0000000000000000000000000000000000000000';

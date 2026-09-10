@@ -20,6 +20,18 @@ export const envSchema = z.object({
   R2_BUCKET_NAME: z.string().min(1),
 
   RESEND_API_KEY: z.string().min(1),
+
+  BRICKKEN_API_KEY: z.string().min(1),
+  BRICKKEN_PRIVATE_KEY: z
+    .string()
+    .regex(
+      /^0x[0-9a-fA-F]{64}$/,
+      'must be a 0x-prefixed 32-byte hex string (the platform signing wallet)',
+    ),
+  BRICKKEN_TOKENIZER_EMAIL: z.string().email(),
+  BRICKKEN_ACCEPTED_COIN: z.string().min(1),
+  BRICKKEN_ENV: z.enum(['sandbox', 'production']).default('sandbox'),
+  BRICKKEN_CHAIN_ID: z.string().min(1).default('84532'),
 });
 
 export type Env = z.infer<typeof envSchema>;

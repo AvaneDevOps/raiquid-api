@@ -7,6 +7,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { EmailService } from '../src/email/email.service';
+import { BrickkenService } from '../src/brickken/brickken.service';
 import { ClerkAuthGuard } from '../src/auth/clerk-auth.guard';
 import type { AuthUser } from '../src/auth/auth-user.type';
 import {
@@ -56,6 +57,15 @@ describe('Admin (e2e)', () => {
         sendBuyerConfirmationLink: jest.fn().mockResolvedValue(undefined),
         sendBuyerReviewOutcome: jest.fn().mockResolvedValue(undefined),
         sendWhitelistDecision: sendWhitelistDecisionMock,
+      })
+      .overrideProvider(BrickkenService)
+      .useValue({
+        tokenizeInvoice: jest.fn().mockResolvedValue({ txHash: null }),
+        launchOffering: jest
+          .fn()
+          .mockResolvedValue({ stoId: 'sto-test', txHash: null }),
+        whitelistInvestorWallet: jest.fn(),
+        closeAndClaim: jest.fn().mockResolvedValue(undefined),
       })
       .compile();
 
@@ -216,10 +226,10 @@ describe('Admin (e2e)', () => {
 
     const mkEvent = (action: OnChainAction, status: OnChainStatus) =>
       prisma.onChainEvent.create({ data: { action, status } });
-    await mkEvent(OnChainAction.mint, OnChainStatus.confirmed);
-    await mkEvent(OnChainAction.mint, OnChainStatus.pending);
-    await mkEvent(OnChainAction.transfer, OnChainStatus.confirmed);
-    await mkEvent(OnChainAction.burn, OnChainStatus.failed);
+    await mkEvent(OnChainAction.mintToken, OnChainStatus.confirmed);
+    await mkEvent(OnChainAction.mintToken, OnChainStatus.pending);
+    await mkEvent(OnChainAction.newSto, OnChainStatus.confirmed);
+    await mkEvent(OnChainAction.dividendDistribution, OnChainStatus.failed);
   });
 
   afterAll(async () => {
@@ -338,7 +348,7 @@ describe('Admin (e2e)', () => {
       expect((all.body as { total: number }).total).toBe(4);
 
       const mints = await request(httpServer)
-        .get('/admin/ledger?action=mint')
+        .get('/admin/ledger?action=mintToken')
         .expect(200);
       expect((mints.body as { total: number }).total).toBe(2);
 
@@ -348,7 +358,7 @@ describe('Admin (e2e)', () => {
       expect((confirmed.body as { total: number }).total).toBe(2);
 
       const mintConfirmed = await request(httpServer)
-        .get('/admin/ledger?action=mint&status=confirmed')
+        .get('/admin/ledger?action=mintToken&status=confirmed')
         .expect(200);
       expect((mintConfirmed.body as { total: number }).total).toBe(1);
 

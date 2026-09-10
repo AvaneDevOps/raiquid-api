@@ -9,17 +9,23 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { BrickkenService } from '../brickken/brickken.service';
+import { BrickkenIntegrationError } from '../brickken/brickken.errors';
+import { brickkenTokenSymbol } from '../brickken/token-symbol';
 import type { AuthUser } from '../auth/auth-user.type';
 import {
   InvoiceStatus,
   NotificationTone,
   WalletTransactionType,
 } from '../common/enums';
-import type { Buyer } from '../generated/prisma/client';
+import type { Buyer, Invoice } from '../generated/prisma/client';
 import type { ListInvoicesQueryDto } from './dto/list-invoices.query.dto';
 import type { PayInvoiceDto } from './dto/pay-invoice.dto';
 import type { ReviewConfirmationDto } from './dto/review-confirmation.dto';
 import type { UpdateBuyerSettingsDto } from './dto/update-buyer-settings.dto';
+
+const STO_START_DELAY_MS = 20 * 60 * 1000;
+const STO_WINDOW_MS = 72 * 60 * 60 * 1000;
 
 @Injectable()
 export class BuyerService {
@@ -29,6 +35,7 @@ export class BuyerService {
     private readonly prisma: PrismaService,
     private readonly email: EmailService,
     private readonly notifications: NotificationsService,
+    private readonly brickken: BrickkenService,
   ) {}
 
   async listInvoices(user: AuthUser, query: ListInvoicesQueryDto) {
@@ -199,7 +206,11 @@ export class BuyerService {
           `Invoice ${invoice.id} tokenized but business notification failed: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
-      return updated;
+
+      await this.tokenizeAndLaunchOffering(updated);
+      return this.prisma.invoice.findUniqueOrThrow({
+        where: { id: updated.id },
+      });
     }
 
     await this.notifications.notify({
@@ -215,6 +226,54 @@ export class BuyerService {
       note: dto.note,
     });
     return invoice;
+  }
+
+  private async tokenizeAndLaunchOffering(invoice: Invoice): Promise<void> {
+    const tokenSymbol = brickkenTokenSymbol(invoice.id);
+    const startDate = new Date(Date.now() + STO_START_DELAY_MS);
+    const endDate = new Date(startDate.getTime() + STO_WINDOW_MS);
+    const raiseAmount = invoice.amount.toString();
+
+    try {
+      await this.brickken.tokenizeInvoice({
+        invoiceId: invoice.id,
+        tokenSymbol,
+        name: `Invoice ${invoice.invoiceNumber}`,
+        supplyCap: raiseAmount,
+      });
+      const { stoId } = await this.brickken.launchOffering({
+        invoiceId: invoice.id,
+        tokenSymbol,
+        offeringName: `Invoice ${invoice.invoiceNumber} financing`,
+        tokenAmount: raiseAmount,
+        raiseAmount,
+        startDate,
+        endDate,
+      });
+      await this.prisma.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          brickkenTokenSymbol: tokenSymbol,
+          brickkenStoId: stoId,
+          brickkenStoEndsAt: endDate,
+          brickkenTokenizationError: null,
+        },
+      });
+    } catch (err) {
+      const message =
+        err instanceof BrickkenIntegrationError
+          ? `[${err.kind}] ${err.message}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      await this.prisma.invoice.update({
+        where: { id: invoice.id },
+        data: { brickkenTokenizationError: message.slice(0, 500) },
+      });
+      this.logger.error(
+        `Invoice ${invoice.id} accepted but Brickken tokenization did not complete: ${message}`,
+      );
+    }
   }
 
   private async getBuyerForUser(user: AuthUser): Promise<Buyer> {

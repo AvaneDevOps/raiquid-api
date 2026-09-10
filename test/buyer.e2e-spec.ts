@@ -7,9 +7,12 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { EmailService } from '../src/email/email.service';
+import { BrickkenService } from '../src/brickken/brickken.service';
+import { BrickkenIntegrationError } from '../src/brickken/brickken.errors';
+import { brickkenTokenSymbol } from '../src/brickken/token-symbol';
 import { ClerkAuthGuard } from '../src/auth/clerk-auth.guard';
 import type { AuthUser } from '../src/auth/auth-user.type';
-import { InvoiceStatus, UserRole } from '../src/common/enums';
+import { InvoiceStatus, OnChainAction, UserRole } from '../src/common/enums';
 
 jest.setTimeout(30_000);
 
@@ -20,6 +23,31 @@ describe('Buyer + Confirm (e2e)', () => {
 
   const sendConfirmationMock = jest.fn().mockResolvedValue(undefined);
   const sendReviewOutcomeMock = jest.fn().mockResolvedValue(undefined);
+
+  const tokenizeInvoiceMock = jest.fn(
+    async ({ invoiceId }: { invoiceId: string }) => {
+      await prisma.onChainEvent.create({
+        data: {
+          action: OnChainAction.newTokenization,
+          status: 'confirmed',
+          invoiceId,
+        },
+      });
+      return { txHash: '0xtokenize' };
+    },
+  );
+  const launchOfferingMock = jest.fn(
+    async ({ invoiceId }: { invoiceId: string }) => {
+      await prisma.onChainEvent.create({
+        data: {
+          action: OnChainAction.newSto,
+          status: 'confirmed',
+          invoiceId,
+        },
+      });
+      return { stoId: 'sto-e2e-uuid', txHash: '0xsto' };
+    },
+  );
 
   let currentUser: AuthUser;
   let businessUser: AuthUser;
@@ -46,6 +74,13 @@ describe('Buyer + Confirm (e2e)', () => {
         sendBuyerConfirmationLink: sendConfirmationMock,
         sendBuyerReviewOutcome: sendReviewOutcomeMock,
         sendWhitelistDecision: jest.fn(),
+      })
+      .overrideProvider(BrickkenService)
+      .useValue({
+        tokenizeInvoice: tokenizeInvoiceMock,
+        launchOffering: launchOfferingMock,
+        whitelistInvestorWallet: jest.fn(),
+        closeAndClaim: jest.fn().mockResolvedValue(undefined),
       })
       .compile();
 
@@ -218,6 +253,89 @@ describe('Buyer + Confirm (e2e)', () => {
         .post('/confirm/not-a-real-token/review')
         .send({ accept: true })
         .expect(404);
+    });
+  });
+
+  describe('brickken tokenization on accept', () => {
+    beforeEach(() => {
+      tokenizeInvoiceMock.mockClear();
+      launchOfferingMock.mockClear();
+    });
+
+    it('calls tokenizeInvoice then launchOffering and persists the STO fields', async () => {
+      const { id, confirmToken } = await createInvoice('INV-BKN-OK', 60000);
+
+      await request(httpServer)
+        .post(`/confirm/${confirmToken}/review`)
+        .send({ accept: true })
+        .expect(201);
+
+      expect(tokenizeInvoiceMock).toHaveBeenCalledTimes(1);
+      expect(launchOfferingMock).toHaveBeenCalledTimes(1);
+      const tokenizeOrder = tokenizeInvoiceMock.mock.invocationCallOrder[0];
+      const launchOrder = launchOfferingMock.mock.invocationCallOrder[0];
+      expect(tokenizeOrder).toBeLessThan(launchOrder);
+
+      const expectedSymbol = brickkenTokenSymbol(id);
+      expect(tokenizeInvoiceMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          invoiceId: id,
+          tokenSymbol: expectedSymbol,
+          name: 'Invoice INV-BKN-OK',
+          supplyCap: '60000',
+        }),
+      );
+      const launchArg = launchOfferingMock.mock.calls[0][0] as {
+        tokenSymbol: string;
+        raiseAmount: string;
+        startDate: Date;
+        endDate: Date;
+      };
+      expect(launchArg.tokenSymbol).toBe(expectedSymbol);
+      expect(launchArg.raiseAmount).toBe('60000');
+      const windowMs =
+        launchArg.endDate.getTime() - launchArg.startDate.getTime();
+      expect(windowMs).toBe(72 * 60 * 60 * 1000);
+      expect(launchArg.startDate.getTime() - Date.now()).toBeGreaterThan(
+        14 * 60 * 1000,
+      );
+
+      const row = await prisma.invoice.findUniqueOrThrow({ where: { id } });
+      expect(row.status).toBe(InvoiceStatus.tokenized);
+      expect(row.brickkenTokenSymbol).toBe(expectedSymbol);
+      expect(row.brickkenStoId).toBe('sto-e2e-uuid');
+      expect(row.brickkenStoEndsAt?.getTime()).toBe(
+        launchArg.endDate.getTime(),
+      );
+      expect(row.brickkenTokenizationError).toBeNull();
+
+      const events = await prisma.onChainEvent.findMany({
+        where: { invoiceId: id },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(events.map((e) => e.action)).toEqual([
+        OnChainAction.newTokenization,
+        OnChainAction.newSto,
+      ]);
+    });
+
+    it('a Brickken failure leaves the invoice tokenized but flagged, not silently on-chain', async () => {
+      const { id, confirmToken } = await createInvoice('INV-BKN-FAIL', 45000);
+      launchOfferingMock.mockRejectedValueOnce(
+        new BrickkenIntegrationError('credits_exhausted', 'no credits left'),
+      );
+
+      await request(httpServer)
+        .post(`/confirm/${confirmToken}/review`)
+        .send({ accept: true })
+        .expect(201);
+
+      const row = await prisma.invoice.findUniqueOrThrow({ where: { id } });
+      expect(row.status).toBe(InvoiceStatus.tokenized);
+      expect(row.confirmedAt).not.toBeNull();
+      expect(row.brickkenStoId).toBeNull();
+      expect(row.brickkenTokenizationError).toContain('credits_exhausted');
+      expect(row.brickkenTokenizationError).toContain('no credits left');
     });
   });
 

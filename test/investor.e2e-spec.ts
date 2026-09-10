@@ -7,6 +7,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { EmailService } from '../src/email/email.service';
+import { BrickkenService } from '../src/brickken/brickken.service';
 import { ClerkAuthGuard } from '../src/auth/clerk-auth.guard';
 import type { AuthUser } from '../src/auth/auth-user.type';
 import {
@@ -91,6 +92,15 @@ describe('Investor + fund flow (e2e)', () => {
         sendBuyerConfirmationLink: jest.fn().mockResolvedValue(undefined),
         sendBuyerReviewOutcome: jest.fn().mockResolvedValue(undefined),
         sendWhitelistDecision: jest.fn(),
+      })
+      .overrideProvider(BrickkenService)
+      .useValue({
+        tokenizeInvoice: jest.fn().mockResolvedValue({ txHash: null }),
+        launchOffering: jest
+          .fn()
+          .mockResolvedValue({ stoId: 'sto-test', txHash: null }),
+        whitelistInvestorWallet: jest.fn(),
+        closeAndClaim: jest.fn().mockResolvedValue(undefined),
       })
       .compile();
 
