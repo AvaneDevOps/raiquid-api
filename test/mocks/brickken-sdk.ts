@@ -62,8 +62,16 @@ const notStubbed = () =>
   Promise.reject(new Error('brickken-sdk mock: not stubbed for this test'));
 
 export class Brickken {
-  readonly tokenization = { create: notStubbed };
-  readonly sto = { create: notStubbed, close: notStubbed, claim: notStubbed };
+  readonly tokenization = {
+    create: notStubbed,
+    distributeDividend: notStubbed,
+  };
+  readonly sto = {
+    create: notStubbed,
+    invest: notStubbed,
+    close: notStubbed,
+    claim: notStubbed,
+  };
   get baseUrl(): string {
     return 'https://api.sandbox.brickken.test';
   }

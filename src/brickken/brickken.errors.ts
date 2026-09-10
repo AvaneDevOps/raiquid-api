@@ -17,6 +17,9 @@ export type BrickkenErrorKind =
   | 'unknown';
 
 export class BrickkenIntegrationError extends Error {
+  /** The Brickken call that failed, set by BrickkenService once known. */
+  action?: string;
+
   constructor(
     readonly kind: BrickkenErrorKind,
     message: string,

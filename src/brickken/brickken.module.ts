@@ -1,10 +1,17 @@
 import { Global, Module } from '@nestjs/common';
-import { BrickkenClientProvider } from './brickken.provider';
+import {
+  BrickkenClientProvider,
+  BrickkenSignerAddressProvider,
+} from './brickken.provider';
 import { BrickkenService } from './brickken.service';
 
 @Global()
 @Module({
-  providers: [BrickkenClientProvider, BrickkenService],
+  providers: [
+    BrickkenClientProvider,
+    BrickkenSignerAddressProvider,
+    BrickkenService,
+  ],
   exports: [BrickkenService],
 })
 export class BrickkenModule {}

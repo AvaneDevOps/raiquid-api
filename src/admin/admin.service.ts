@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   ConflictException,
   Injectable,
   Logger,
@@ -7,6 +8,8 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { BrickkenService } from '../brickken/brickken.service';
+import { BrickkenIntegrationError } from '../brickken/brickken.errors';
 import {
   InvoiceStatus,
   NotificationTone,
@@ -41,6 +44,7 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly email: EmailService,
     private readonly notifications: NotificationsService,
+    private readonly brickken: BrickkenService,
   ) {}
 
   async getOverview() {
@@ -162,6 +166,55 @@ export class AdminService {
     ]);
 
     return { data, page: query.page, pageSize: query.pageSize, total };
+  }
+
+  async finalizeInvoiceOnChain(invoiceId: string) {
+    const invoice = await this.prisma.invoice.findUnique({
+      where: { id: invoiceId },
+    });
+    if (!invoice) {
+      throw new NotFoundException('Invoice not found');
+    }
+    if (!invoice.brickkenStoId || !invoice.brickkenTokenSymbol) {
+      throw new ConflictException(
+        'Invoice has no launched Brickken offering to finalize',
+      );
+    }
+    if (invoice.brickkenFinalizedAt) {
+      throw new ConflictException(
+        "This invoice's on-chain offering has already been finalized",
+      );
+    }
+    if (
+      !invoice.brickkenStoEndsAt ||
+      invoice.brickkenStoEndsAt.getTime() > Date.now()
+    ) {
+      throw new ConflictException(
+        `The STO window has not closed yet (ends ${
+          invoice.brickkenStoEndsAt?.toISOString() ?? 'unknown'
+        }); finalize is not callable until then`,
+      );
+    }
+
+    try {
+      const transactions = await this.brickken.finalizeOffering({
+        invoiceId: invoice.id,
+        tokenSymbol: invoice.brickkenTokenSymbol,
+        dividendAmount: invoice.fundedAmount.toString(),
+      });
+      const updated = await this.prisma.invoice.update({
+        where: { id: invoice.id },
+        data: { brickkenFinalizedAt: new Date() },
+      });
+      return { invoice: updated, transactions };
+    } catch (err) {
+      if (err instanceof BrickkenIntegrationError) {
+        throw new BadGatewayException(
+          `Brickken finalize stopped at "${err.action ?? 'unknown'}" [${err.kind}]: ${err.message}. Any earlier steps succeeded and are in the ledger; the invoice is not marked finalized.`,
+        );
+      }
+      throw err;
+    }
   }
 
   async listWhitelistingQueue(query: PaginationQueryDto) {

@@ -43,14 +43,23 @@ function makeService(bkn: Partial<Brickken>) {
       ({
         BRICKKEN_CHAIN_ID: '84532',
         BRICKKEN_TOKENIZER_EMAIL: 'tokenizer@raiquid.test',
+        BRICKKEN_INVESTOR_EMAIL: 'investor@raiquid.test',
         BRICKKEN_ACCEPTED_COIN: '0x0000000000000000000000000000000000000000',
       })[key],
   } as unknown as ConfigService;
 
+  const signerAddress = '0x000000000000000000000000000000000000d00d';
+
   return {
-    service: new BrickkenService(bkn as Brickken, prisma, config),
+    service: new BrickkenService(
+      bkn as Brickken,
+      prisma,
+      config,
+      signerAddress,
+    ),
     create,
     events,
+    signerAddress,
   };
 }
 
@@ -207,5 +216,119 @@ describe('BrickkenService', () => {
     expect(() => service.whitelistInvestorWallet()).toThrow(
       NotImplementedException,
     );
+  });
+
+  it('invest: writes a newInvest event and calls the SDK as the platform wallet', async () => {
+    const sdkInvest = jest.fn().mockResolvedValue({
+      txId: 'tx',
+      executionMode: 'client-signed',
+      transactions: [],
+      raw: {},
+      sent: { transactionHashes: ['0xfeed'] },
+    });
+    const { service, create, events, signerAddress } = makeService({
+      sto: { invest: sdkInvest } as unknown as Brickken['sto'],
+    });
+
+    const out = await service.invest({
+      invoiceId: 'inv-9',
+      tokenSymbol: 'RAAAA',
+      amount: '5000',
+    });
+
+    expect(out.txHash).toBe('0xfeed');
+    expect(sdkInvest).toHaveBeenCalledWith(
+      {
+        chainId: '84532',
+        tokenSymbol: 'RAAAA',
+        investorEmail: 'investor@raiquid.test',
+        investorAddress: signerAddress,
+        investmentAmount: '5000',
+      },
+      { execute: true },
+    );
+    expect(create.mock.calls[0][0].data).toEqual(
+      expect.objectContaining({ action: 'newInvest', invoiceId: 'inv-9' }),
+    );
+    expect(events[0]).toEqual({
+      id: 'evt-1',
+      status: OnChainStatus.confirmed,
+      txHash: '0xfeed',
+    });
+  });
+
+  it('finalizeOffering: runs closeOffer, then claimTokens, then dividendDistribution', async () => {
+    const ok = (hash: string) =>
+      jest.fn().mockResolvedValue({
+        txId: 'tx',
+        executionMode: 'client-signed',
+        transactions: [],
+        raw: {},
+        sent: { transactionHashes: [hash] },
+      });
+    const close = ok('0x01');
+    const claim = ok('0x02');
+    const distributeDividend = ok('0x03');
+    const { service, create } = makeService({
+      sto: { close, claim } as unknown as Brickken['sto'],
+      tokenization: {
+        distributeDividend,
+      } as unknown as Brickken['tokenization'],
+    });
+
+    const out = await service.finalizeOffering({
+      invoiceId: 'inv-fin',
+      tokenSymbol: 'RAAAA',
+      dividendAmount: '60000',
+    });
+
+    expect(out).toEqual({
+      closeTxHash: '0x01',
+      claimTxHash: '0x02',
+      dividendTxHash: '0x03',
+    });
+    expect(distributeDividend).toHaveBeenCalledWith(
+      { chainId: '84532', tokenSymbol: 'RAAAA', amount: '60000' },
+      { execute: true },
+    );
+    expect(close.mock.invocationCallOrder[0]).toBeLessThan(
+      claim.mock.invocationCallOrder[0],
+    );
+    expect(claim.mock.invocationCallOrder[0]).toBeLessThan(
+      distributeDividend.mock.invocationCallOrder[0],
+    );
+    expect(
+      create.mock.calls.map(
+        (c) => (c[0] as { data: { action: string } }).data.action,
+      ),
+    ).toEqual(['closeOffer', 'claimTokens', 'dividendDistribution']);
+  });
+
+  it('finalizeOffering: a closeOffer failure stops before claimTokens', async () => {
+    const close = jest.fn().mockRejectedValue(new AuthError('not tokenizer'));
+    const claim = jest.fn();
+    const distributeDividend = jest.fn();
+    const { service, events } = makeService({
+      sto: { close, claim } as unknown as Brickken['sto'],
+      tokenization: {
+        distributeDividend,
+      } as unknown as Brickken['tokenization'],
+    });
+
+    await expect(
+      service.finalizeOffering({
+        invoiceId: 'inv-fin',
+        tokenSymbol: 'RAAAA',
+        dividendAmount: '1',
+      }),
+    ).rejects.toMatchObject({
+      name: 'BrickkenIntegrationError',
+      kind: 'auth',
+      action: 'closeOffer',
+    });
+    expect(claim).not.toHaveBeenCalled();
+    expect(distributeDividend).not.toHaveBeenCalled();
+    expect(events).toHaveLength(1);
+    expect(events[0].status).toBe(OnChainStatus.failed);
   });
 });

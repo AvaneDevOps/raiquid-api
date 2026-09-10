@@ -17,6 +17,7 @@ const base = {
   BRICKKEN_PRIVATE_KEY:
     '0x0000000000000000000000000000000000000000000000000000000000000001',
   BRICKKEN_TOKENIZER_EMAIL: 'tokenizer@raiquid.test',
+  BRICKKEN_INVESTOR_EMAIL: 'investor@raiquid.test',
   BRICKKEN_ACCEPTED_COIN: '0x0000000000000000000000000000000000000000',
 };
 
@@ -37,6 +38,15 @@ describe('validateEnv', () => {
     expect(() =>
       validateEnv({ ...base, BRICKKEN_PRIVATE_KEY: 'not-a-key' }),
     ).toThrow(/BRICKKEN_PRIVATE_KEY/);
+  });
+
+  it('rejects a BRICKKEN_INVESTOR_EMAIL equal to BRICKKEN_TOKENIZER_EMAIL', () => {
+    expect(() =>
+      validateEnv({
+        ...base,
+        BRICKKEN_INVESTOR_EMAIL: base.BRICKKEN_TOKENIZER_EMAIL,
+      }),
+    ).toThrow(/BRICKKEN_INVESTOR_EMAIL/);
   });
 
   it('throws when a required variable is missing', () => {

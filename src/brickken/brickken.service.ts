@@ -9,7 +9,7 @@ import type { Brickken, WriteResult } from 'brickken-sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { OnChainAction, OnChainStatus } from '../common/enums';
 import type { Env } from '../config/env.validation';
-import { BRICKKEN_CLIENT } from './brickken.tokens';
+import { BRICKKEN_CLIENT, BRICKKEN_SIGNER_ADDRESS } from './brickken.tokens';
 import { BrickkenIntegrationError, mapBrickkenError } from './brickken.errors';
 
 const STO_ID_KEYS = ['stoId', 'offeringId', 'id', 'uuid'] as const;
@@ -54,11 +54,18 @@ export interface LaunchOfferingInput {
   endDate: Date;
 }
 
-export interface CloseAndClaimInput {
+export interface InvestInput {
   invoiceId: string;
   tokenSymbol: string;
-  investorEmail: string;
-  investorAddress: string;
+  /** Human-readable amount, in the STO's accepted-coin units. */
+  amount: string;
+}
+
+export interface FinalizeOfferingInput {
+  invoiceId: string;
+  tokenSymbol: string;
+  /** Human-readable dividend amount to distribute to token holders. */
+  dividendAmount: string;
 }
 
 @Injectable()
@@ -66,17 +73,20 @@ export class BrickkenService {
   private readonly logger = new Logger(BrickkenService.name);
   private readonly chainId: string;
   private readonly tokenizerEmail: string;
+  private readonly investorEmail: string;
   private readonly acceptedCoin: string;
 
   constructor(
     @Inject(BRICKKEN_CLIENT) private readonly bkn: Brickken,
     private readonly prisma: PrismaService,
     config: ConfigService<Env, true>,
+    @Inject(BRICKKEN_SIGNER_ADDRESS) private readonly signerAddress: string,
   ) {
     this.chainId = config.get('BRICKKEN_CHAIN_ID', { infer: true });
     this.tokenizerEmail = config.get('BRICKKEN_TOKENIZER_EMAIL', {
       infer: true,
     });
+    this.investorEmail = config.get('BRICKKEN_INVESTOR_EMAIL', { infer: true });
     this.acceptedCoin = config.get('BRICKKEN_ACCEPTED_COIN', { infer: true });
   }
 
@@ -144,28 +154,84 @@ export class BrickkenService {
     return { stoId, txHash };
   }
 
-  async closeAndClaim(input: CloseAndClaimInput): Promise<void> {
-    await this.call(OnChainAction.closeOffer, input.invoiceId, () =>
-      this.bkn.sto.close(
-        {
-          chainId: this.chainId,
-          tokenSymbol: input.tokenSymbol,
-          tokenizerEmail: this.tokenizerEmail,
-        },
-        { execute: true },
-      ),
+  /**
+   * The platform wallet's single on-chain investment into an invoice's STO. One
+   * call per retail funding event; Brickken only ever sees the platform wallet.
+   */
+  async invest(input: InvestInput): Promise<{ txHash: string | null }> {
+    const { txHash } = await this.call(
+      OnChainAction.newInvest,
+      input.invoiceId,
+      () =>
+        this.bkn.sto.invest(
+          {
+            chainId: this.chainId,
+            tokenSymbol: input.tokenSymbol,
+            investorEmail: this.investorEmail,
+            investorAddress: this.signerAddress as `0x${string}`,
+            investmentAmount: input.amount,
+          },
+          { execute: true },
+        ),
     );
-    await this.call(OnChainAction.claimTokens, input.invoiceId, () =>
-      this.bkn.sto.claim(
-        {
-          chainId: this.chainId,
-          tokenSymbol: input.tokenSymbol,
-          investorEmail: input.investorEmail,
-          investorAddress: input.investorAddress as `0x${string}`,
-        },
-        { execute: true },
-      ),
+    return { txHash };
+  }
+
+  /**
+   * Closes a finished STO, claims its tokens to the platform wallet, then
+   * distributes dividends — strictly in that order. Each step is its own
+   * OnChainEvent; a failure throws before the next step is attempted.
+   */
+  async finalizeOffering(input: FinalizeOfferingInput): Promise<{
+    closeTxHash: string | null;
+    claimTxHash: string | null;
+    dividendTxHash: string | null;
+  }> {
+    const close = await this.call(
+      OnChainAction.closeOffer,
+      input.invoiceId,
+      () =>
+        this.bkn.sto.close(
+          {
+            chainId: this.chainId,
+            tokenSymbol: input.tokenSymbol,
+            tokenizerEmail: this.tokenizerEmail,
+          },
+          { execute: true },
+        ),
     );
+    const claim = await this.call(
+      OnChainAction.claimTokens,
+      input.invoiceId,
+      () =>
+        this.bkn.sto.claim(
+          {
+            chainId: this.chainId,
+            tokenSymbol: input.tokenSymbol,
+            investorEmail: this.investorEmail,
+            investorAddress: this.signerAddress as `0x${string}`,
+          },
+          { execute: true },
+        ),
+    );
+    const dividend = await this.call(
+      OnChainAction.dividendDistribution,
+      input.invoiceId,
+      () =>
+        this.bkn.tokenization.distributeDividend(
+          {
+            chainId: this.chainId,
+            tokenSymbol: input.tokenSymbol,
+            amount: input.dividendAmount,
+          },
+          { execute: true },
+        ),
+    );
+    return {
+      closeTxHash: close.txHash,
+      claimTxHash: claim.txHash,
+      dividendTxHash: dividend.txHash,
+    };
   }
 
   private async call(
@@ -200,6 +266,7 @@ export class BrickkenService {
       return { result, txHash };
     } catch (err) {
       const mapped = mapBrickkenError(err);
+      mapped.action = action;
       await this.prisma.onChainEvent.update({
         where: { id: event.id },
         data: {

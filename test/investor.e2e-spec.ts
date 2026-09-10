@@ -8,11 +8,14 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { EmailService } from '../src/email/email.service';
 import { BrickkenService } from '../src/brickken/brickken.service';
+import { BrickkenIntegrationError } from '../src/brickken/brickken.errors';
+import { brickkenTokenSymbol } from '../src/brickken/token-symbol';
 import { ClerkAuthGuard } from '../src/auth/clerk-auth.guard';
 import type { AuthUser } from '../src/auth/auth-user.type';
 import {
   InvoiceStatus,
   KycDocumentType,
+  OnChainAction,
   WalletTransactionType,
   WhitelistStatus,
   UserRole,
@@ -49,6 +52,17 @@ describe('Investor + fund flow (e2e)', () => {
     dbUserId,
     role,
     email: `${dbUserId}@test.example`,
+  });
+
+  const investMock = jest.fn(async ({ invoiceId }: { invoiceId: string }) => {
+    await prisma.onChainEvent.create({
+      data: {
+        action: OnChainAction.newInvest,
+        status: 'confirmed',
+        invoiceId,
+      },
+    });
+    return { txHash: null };
   });
 
   async function makeInvestor(
@@ -100,7 +114,12 @@ describe('Investor + fund flow (e2e)', () => {
           .fn()
           .mockResolvedValue({ stoId: 'sto-test', txHash: null }),
         whitelistInvestorWallet: jest.fn(),
-        closeAndClaim: jest.fn().mockResolvedValue(undefined),
+        invest: investMock,
+        finalizeOffering: jest.fn().mockResolvedValue({
+          closeTxHash: null,
+          claimTxHash: null,
+          dividendTxHash: null,
+        }),
       })
       .compile();
 
@@ -364,6 +383,81 @@ describe('Investor + fund flow (e2e)', () => {
         .post(`/investor/marketplace/${inv.id}/fund`)
         .send({ amount: 5_000 })
         .expect(409);
+    });
+  });
+
+  describe('brickken newInvest on fund', () => {
+    let bknInvestorUser: AuthUser;
+    let bknInvestorId: string;
+
+    beforeAll(async () => {
+      ({ user: bknInvestorUser, investorId: bknInvestorId } =
+        await makeInvestor('bkn', WhitelistStatus.whitelisted, 500_000));
+    });
+
+    beforeEach(() => {
+      investMock.mockClear();
+    });
+
+    it('mirrors a completed funding to the STO as the platform wallet', async () => {
+      const invoiceId = await createTokenizedInvoice(
+        `INV-BKN-INV-${RUN}`,
+        100_000,
+      );
+
+      currentUser = bknInvestorUser;
+      await request(httpServer)
+        .post(`/investor/marketplace/${invoiceId}/fund`)
+        .send({ amount: 30_000 })
+        .expect(201);
+
+      expect(investMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          invoiceId,
+          tokenSymbol: brickkenTokenSymbol(invoiceId),
+          amount: '30000',
+        }),
+      );
+
+      const event = await prisma.onChainEvent.findFirst({
+        where: { invoiceId, action: OnChainAction.newInvest },
+      });
+      expect(event).not.toBeNull();
+
+      const holding = await prisma.holding.findUniqueOrThrow({
+        where: {
+          investorId_invoiceId: { investorId: bknInvestorId, invoiceId },
+        },
+      });
+      expect(holding.brickkenInvestmentError).toBeNull();
+    });
+
+    it('a newInvest failure leaves the funding intact and flags the Holding', async () => {
+      const invoiceId = await createTokenizedInvoice(
+        `INV-BKN-INV-FAIL-${RUN}`,
+        100_000,
+      );
+      investMock.mockRejectedValueOnce(
+        new BrickkenIntegrationError('rate_limited', 'slow down'),
+      );
+
+      currentUser = bknInvestorUser;
+      const res = await request(httpServer)
+        .post(`/investor/marketplace/${invoiceId}/fund`)
+        .send({ amount: 25_000 })
+        .expect(201);
+      expect((res.body as { status: string }).status).toBe(
+        InvoiceStatus.funding,
+      );
+
+      const holding = await prisma.holding.findUniqueOrThrow({
+        where: {
+          investorId_invoiceId: { investorId: bknInvestorId, invoiceId },
+        },
+      });
+      expect(Number(holding.amount)).toBe(25_000);
+      expect(holding.brickkenInvestmentError).toContain('rate_limited');
+      expect(holding.brickkenInvestmentError).toContain('slow down');
     });
   });
 

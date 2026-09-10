@@ -7,7 +7,10 @@ import { validateEnv } from '../src/config/env.validation';
 import { PrismaModule } from '../src/prisma/prisma.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { BrickkenService } from '../src/brickken/brickken.service';
-import { BRICKKEN_CLIENT } from '../src/brickken/brickken.tokens';
+import {
+  BRICKKEN_CLIENT,
+  BRICKKEN_SIGNER_ADDRESS,
+} from '../src/brickken/brickken.tokens';
 import { BrickkenIntegrationError } from '../src/brickken/brickken.errors';
 import { OnChainAction, OnChainStatus, UserRole } from '../src/common/enums';
 
@@ -19,10 +22,28 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
   let brickken: BrickkenService;
 
   const tokenizationCreate = jest.fn();
+  const tokenizationDistributeDividend = jest.fn();
   const stoCreate = jest.fn();
+  const stoInvest = jest.fn();
+  const stoClose = jest.fn();
+  const stoClaim = jest.fn();
 
+  const SIGNER = '0x000000000000000000000000000000000000d00d';
   const RUN = randomUUID();
   let invoiceId: string;
+
+  // OnChainEvent.txHash is globally unique; the throwaway DB is not wiped between
+  // `npm run test:e2e` runs, so every hash this spec inserts is namespaced by RUN.
+  const hx = (suffix: string) => `0x${RUN.replace(/-/g, '')}${suffix}`;
+
+  const writeResult = (hash: string, info?: Record<string, unknown>) => ({
+    txId: 'tx',
+    executionMode: 'client-signed',
+    transactions: [],
+    raw: {},
+    ...(info ? { info } : {}),
+    sent: { transactionHashes: [hash] },
+  });
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -32,14 +53,19 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
       ],
       providers: [
         BrickkenService,
+        { provide: BRICKKEN_SIGNER_ADDRESS, useValue: SIGNER },
         {
           provide: BRICKKEN_CLIENT,
           useValue: {
-            tokenization: { create: tokenizationCreate },
+            tokenization: {
+              create: tokenizationCreate,
+              distributeDividend: tokenizationDistributeDividend,
+            },
             sto: {
               create: stoCreate,
-              close: jest.fn(),
-              claim: jest.fn(),
+              invest: stoInvest,
+              close: stoClose,
+              claim: stoClaim,
             },
           },
         },
@@ -85,7 +111,11 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
 
   beforeEach(() => {
     tokenizationCreate.mockReset();
+    tokenizationDistributeDividend.mockReset();
     stoCreate.mockReset();
+    stoInvest.mockReset();
+    stoClose.mockReset();
+    stoClaim.mockReset();
   });
 
   it('writes a pending OnChainEvent, then confirms it with the tx hash', async () => {
@@ -94,7 +124,7 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
       executionMode: 'client-signed',
       transactions: [],
       raw: {},
-      sent: { transactionHashes: ['0xc0ffee'] },
+      sent: { transactionHashes: [hx('c0ffee')] },
     });
 
     const result = await brickken.tokenizeInvoice({
@@ -103,7 +133,7 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
       name: 'Invoice BKN',
       supplyCap: '100000',
     });
-    expect(result.txHash).toBe('0xc0ffee');
+    expect(result.txHash).toBe(hx('c0ffee'));
 
     const events = await prisma.onChainEvent.findMany({
       where: { invoiceId, action: OnChainAction.newTokenization },
@@ -111,7 +141,7 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
       status: OnChainStatus.confirmed,
-      txHash: '0xc0ffee',
+      txHash: hx('c0ffee'),
       chainId: 84532,
     });
   });
@@ -151,7 +181,7 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
       transactions: [],
       raw: {},
       info: { stoId: 'sto-real-uuid' },
-      sent: { transactionHashes: ['0x5701'] },
+      sent: { transactionHashes: [hx('5701')] },
     });
 
     const out = await brickken.launchOffering({
@@ -172,7 +202,7 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
         status: OnChainStatus.confirmed,
       },
     });
-    expect(event?.txHash).toBe('0x5701');
+    expect(event?.txHash).toBe(hx('5701'));
   });
 
   it('launchOffering: a response with no STO id is a BrickkenIntegrationError', async () => {
@@ -182,7 +212,7 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
       transactions: [],
       raw: {},
       info: {},
-      sent: { transactionHashes: ['0xabc'] },
+      sent: { transactionHashes: [hx('abc')] },
     });
 
     await expect(
@@ -196,5 +226,116 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
         endDate: new Date('2027-01-04T00:00:00Z'),
       }),
     ).rejects.toBeInstanceOf(BrickkenIntegrationError);
+  });
+
+  it('invest: confirms a newInvest event and passes the platform signer address', async () => {
+    stoInvest.mockResolvedValue(writeResult(hx('1a7')));
+
+    const out = await brickken.invest({
+      invoiceId,
+      tokenSymbol: 'RTEST',
+      amount: '5000',
+    });
+    expect(out.txHash).toBe(hx('1a7'));
+    expect(stoInvest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tokenSymbol: 'RTEST',
+        investorAddress: SIGNER,
+        investorEmail: process.env.BRICKKEN_INVESTOR_EMAIL,
+        investmentAmount: '5000',
+      }),
+      { execute: true },
+    );
+
+    const event = await prisma.onChainEvent.findFirst({
+      where: {
+        invoiceId,
+        action: OnChainAction.newInvest,
+        status: OnChainStatus.confirmed,
+      },
+    });
+    expect(event?.txHash).toBe(hx('1a7'));
+  });
+
+  it('invest: an SDK failure marks the event failed and throws a mapped error', async () => {
+    stoInvest.mockRejectedValue(new AuthError('investor not whitelisted'));
+
+    await expect(
+      brickken.invest({ invoiceId, tokenSymbol: 'RTEST', amount: '1' }),
+    ).rejects.toMatchObject({ kind: 'auth', action: 'newInvest' });
+
+    const failed = await prisma.onChainEvent.findFirst({
+      where: {
+        invoiceId,
+        action: OnChainAction.newInvest,
+        status: OnChainStatus.failed,
+      },
+    });
+    expect(failed?.rawPayload).toMatchObject({ kind: 'auth' });
+  });
+
+  it('finalizeOffering: writes closeOffer, claimTokens, dividendDistribution in order', async () => {
+    stoClose.mockResolvedValue(writeResult(hx('c105e')));
+    stoClaim.mockResolvedValue(writeResult(hx('c1a1a')));
+    tokenizationDistributeDividend.mockResolvedValue(writeResult(hx('d171d')));
+
+    const before = new Date();
+    const out = await brickken.finalizeOffering({
+      invoiceId,
+      tokenSymbol: 'RTEST',
+      dividendAmount: '60000',
+    });
+    expect(out).toEqual({
+      closeTxHash: hx('c105e'),
+      claimTxHash: hx('c1a1a'),
+      dividendTxHash: hx('d171d'),
+    });
+
+    const events = await prisma.onChainEvent.findMany({
+      where: {
+        invoiceId,
+        createdAt: { gte: before },
+        action: {
+          in: [
+            OnChainAction.closeOffer,
+            OnChainAction.claimTokens,
+            OnChainAction.dividendDistribution,
+          ],
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(events.map((e) => e.action)).toEqual([
+      OnChainAction.closeOffer,
+      OnChainAction.claimTokens,
+      OnChainAction.dividendDistribution,
+    ]);
+    expect(events.every((e) => e.status === OnChainStatus.confirmed)).toBe(
+      true,
+    );
+  });
+
+  it('finalizeOffering: stops at a failed step and does not attempt the next', async () => {
+    stoClose.mockResolvedValue(writeResult(hx('c105e2')));
+    stoClaim.mockRejectedValue(new AuthError('claim rejected'));
+
+    const before = new Date();
+    await expect(
+      brickken.finalizeOffering({
+        invoiceId,
+        tokenSymbol: 'RTEST',
+        dividendAmount: '1',
+      }),
+    ).rejects.toMatchObject({ kind: 'auth', action: 'claimTokens' });
+
+    expect(tokenizationDistributeDividend).not.toHaveBeenCalled();
+    const events = await prisma.onChainEvent.findMany({
+      where: { invoiceId, createdAt: { gte: before } },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(events.map((e) => `${e.action}:${e.status}`)).toEqual([
+      `${OnChainAction.closeOffer}:${OnChainStatus.confirmed}`,
+      `${OnChainAction.claimTokens}:${OnChainStatus.failed}`,
+    ]);
   });
 });

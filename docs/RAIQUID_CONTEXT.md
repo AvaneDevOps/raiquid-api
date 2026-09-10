@@ -85,8 +85,9 @@ learned from the frontend, and behavioural details that would otherwise be a
   Brickken.** On funding it is set equal to the invested `amount`, and
   that is not a placeholder waiting on a "minting service" — there is no
   on-chain source for it. Brickken's STO has exactly one on-chain
-  investor: the platform wallet, which invests the whole raise in a
-  single `newInvest`. Brickken has no concept of the individual retail
+  investor: the platform wallet, which invests into the STO with a
+  `newInvest` per retail funding event (`recordOnChainInvestment` in
+  `investor.service.ts`). Brickken has no concept of the individual retail
   investors funding an invoice through `POST /investor/marketplace/:id/fund`,
   so it cannot report per-investor token units. `Holding.tokenUnits` is
   the platform's internal proportional split of the STO's tokens across
@@ -288,23 +289,30 @@ knowing before you change the surrounding code.
 ## Brickken integration
 
 The on-chain layer runs through the Brickken Dapp API (`brickken-sdk`,
-`src/brickken/`). This is the **foundation only** — the client is wrapped, the
-schema is real, one hook is wired (buyer acceptance → tokenize + launch STO),
-and every test mocks `BrickkenService`. Live verification against the sandbox
-waits on Brickken confirming our wallet registration.
+`src/brickken/`). Three hooks are wired — buyer acceptance → `newTokenization` +
+`newSto`; investor funding → `newInvest`; admin finalize → `closeOffer` +
+`claimTokens` + `dividendDistribution` — and every test mocks `BrickkenService`
+or the `BRICKKEN_CLIENT` provider. No test makes a live call. Live verification
+against the sandbox waits on Brickken confirming our wallet registration.
 
 - **Config.** `BRICKKEN_API_KEY` + `BRICKKEN_PRIVATE_KEY` (a whitelisted 32-byte
   hex signing wallet) are the two credentials; Dapp writes run `client-signed`
-  (we sign locally, Brickken broadcasts), so both are needed. The task named
-  four vars; two more were unavoidable because the SDK's `newTokenization` /
-  `newSto` inputs require them: `BRICKKEN_TOKENIZER_EMAIL` (must match the email
-  tied to the API key) and `BRICKKEN_ACCEPTED_COIN` (the STO payment-token
-  address on-chain). `BRICKKEN_PRIVATE_KEY` is treated with the same care as
-  `CLERK_SECRET_KEY` — never logged, and `BrickkenClientProvider` is the only
-  place it's read. All six are required (same zod pattern as every other
-  credential), so the deployed app will not boot until they're set in the
-  Railway environment; a throwaway-but-valid private key
-  (`0x$(openssl rand -hex 32)`) is fine until live calls are switched on.
+  (we sign locally, Brickken broadcasts), so both are needed. Beyond the four
+  vars first planned, three more are unavoidable: `BRICKKEN_TOKENIZER_EMAIL`
+  (must match the email tied to the API key) and `BRICKKEN_ACCEPTED_COIN` (the
+  STO payment-token address on-chain), both required by the SDK's
+  `newTokenization` / `newSto` inputs; and `BRICKKEN_INVESTOR_EMAIL`, the
+  platform's on-chain investor identity for `newInvest` / `claimTokens` —
+  Brickken rejects an investment whose investor email equals the token's
+  tokenizer email, so `env.validation.ts` fails at boot if the two match. The
+  platform wallet's 0x address (needed as `investorAddress`) is **derived** from
+  `BRICKKEN_PRIVATE_KEY` at boot by `BrickkenSignerAddressProvider` — no
+  separate env var, so it cannot drift from the key. `BRICKKEN_PRIVATE_KEY` is
+  treated with the same care as `CLERK_SECRET_KEY` — never logged, and the two
+  Brickken providers are the only places it's read. All seven are required
+  (same zod pattern as every other credential), so the deployed app will not
+  boot until they're set in the Railway environment; a throwaway-but-valid
+  private key (`0x$(openssl rand -hex 32)`) is fine until live calls are on.
 
 - **Token symbol derivation.** `brickkenTokenSymbol(invoiceId)` →
   `"R"` + four `[A-Z]` characters, each `sha256(invoiceId)[i] % 26`. Five
@@ -321,10 +329,58 @@ waits on Brickken confirming our wallet registration.
   at mine time, not prepare time, and warns to buffer generously; 20 min covers
   the 15-min minimum plus the SDK's 60s clock-skew allowance plus prepare/mine
   latency). `endDate` = `startDate` + **72 hours**, stored on
-  `Invoice.brickkenStoEndsAt`. 72h gives the off-chain marketplace time to fully
-  fund the invoice through `POST /investor/marketplace/:id/fund` before the
-  platform wallet makes its single `newInvest` and the offer is closed. Revisit
-  once the fund → `newInvest` → `closeOffer`/`claimTokens` hooks are wired.
+  `Invoice.brickkenStoEndsAt`. 72h gives the off-chain marketplace time to fund
+  the invoice through `POST /investor/marketplace/:id/fund` (each funding fires a
+  `newInvest`) before an admin finalizes the offer.
+
+- **`newSto` amount parameters — one placeholder, the rest are modelling
+  assumptions.** `launchOffering` passes `minRaiseUSD` = `maxRaiseUSD` =
+  `maxInvestment` = `tokenAmount` = `supplyCap` = the invoice `amount`, and
+  `minInvestment` = the literal `"1"`. So:
+  - `minInvestment: "1"` is a **hardcoded placeholder** — nothing on the invoice
+    or in config drives it. It needs a real per-STO minimum (Brickken's, or our
+    ₦5,000 `FundInvoiceDto` floor converted to the accepted coin) before live.
+  - `minRaiseUSD == maxRaiseUSD == invoice amount` encodes "the STO raises
+    exactly the invoice face value, in one tranche" — no oversubscription, no
+    partial-raise close. `maxInvestment == the whole raise` means Brickken
+    enforces no per-investor cap (our ₦5,000 floor and the remaining-balance
+    check in `fundInvoice` are the only limits, and they are off-chain).
+  - `tokenAmount == amount` bakes in "1 security token ≈ 1 currency unit".
+  - the fields are named `USD`; our invoices default to `currency = "NGN"`.
+  Currency handling and all of the above are unresolved and belong in the live
+  follow-up.
+
+- **How an investor `newInvest` failure surfaces — on the Holding, not the
+  Invoice.** `fundInvoice` commits the Holding + wallet transaction + invoice
+  `fundedAmount`/status in one transaction, then calls `brickken.invest` *after*
+  the commit. The investor's money is real in our ledger regardless of chain
+  state, so a Brickken failure never rolls anything back: it sets
+  `Holding.brickkenInvestmentError` to the mapped `[kind] message` and logs. A
+  later successful `newInvest` for that Holding clears it back to null.
+  Reconciliation query: **`Holding WHERE brickkenInvestmentError IS NOT NULL`**
+  = retail capital in our books that the STO has not been told about. It lives
+  on `Holding` and not `Invoice` because each retail funding is its own
+  `newInvest` and one invoice has many funders — an `Invoice` string could not
+  say which investor's tranche is un-mirrored. Because a Holding is upserted
+  (amount incremented across repeat fundings), the flag is a coarse
+  "needs-reconciliation" signal, not a per-tranche ledger; the precise trail is
+  the `OnChainEvent` rows (one per `newInvest` attempt). If the invoice has no
+  `brickkenTokenSymbol` at all (tokenization never completed), the flag is set
+  with that reason and `invest` is skipped.
+
+- **Admin finalize.** `POST /admin/invoices/:id/finalize-onchain` checks
+  `brickkenStoEndsAt` has actually passed (a clear 409 otherwise, rather than
+  letting a contract revert be the only signal), that an offering was launched
+  (`brickkenStoId` set), and that it is not already finalized
+  (`brickkenFinalizedAt` null). It then runs `closeOffer` → `claimTokens` →
+  `dividendDistribution` strictly in order, each its own `OnChainEvent`; the
+  first failure throws (a 502 naming the step) and the later steps do not run.
+  `brickkenFinalizedAt` is set only when all three succeed, so a failed finalize
+  is safely re-runnable — but the re-run repeats every step, and whether
+  Brickken treats a second `closeOffer` as idempotent is a live-sandbox
+  unknown. The dividend amount is `invoice.fundedAmount` — the capital raised —
+  which is the best single figure available at finalize time but is itself an
+  assumption about what "distribute dividends" means here.
 
 - **How a Brickken failure surfaces.** `tokenizeAndLaunchOffering` runs *after*
   the transaction that sets `tokenized` + `confirmedAt` + the notification —
@@ -343,11 +399,14 @@ waits on Brickken confirming our wallet registration.
   wrong): STO `startDate` / `endDate` are passed as **Unix-seconds strings**;
   `newSto`'s STO id is read from `result.info` / `result.raw` under one of
   `stoId` / `offeringId` / `id` / `uuid` (a successful `newSto` with no id in
-  the response is treated as a failure); `tokenType` is `BILL_FACTORING`;
-  `tokenAmount` / `minRaiseUSD` / `maxRaiseUSD` / `maxInvestment` are all the
-  invoice `amount` and `minInvestment` is `"1"`. The invoice currency is `NGN`
-  by default while Brickken's raise fields are named `USD` — currency handling
-  is unresolved and belongs in the live follow-up.
+  the response is treated as a failure); `tokenType` is `BILL_FACTORING`; the
+  `newSto` amount parameters (see the dedicated bullet above); `newInvest` is
+  made by the platform wallet with `BRICKKEN_INVESTOR_EMAIL` +
+  `investmentAmount` as a human-readable string; `claimTokens` claims to the
+  same platform wallet; `dividendDistribution` amount is `fundedAmount`;
+  a tx hash is read from `result.sent.transactionHashes[0]`. The invoice
+  currency is `NGN` by default while Brickken's raise fields are named `USD` —
+  currency handling is unresolved and belongs in the live follow-up.
 
 - **`brickken-sdk` audit.** `brickken-sdk@0.2.1` has one runtime dependency,
   `micro-eth-signer` (pure JS, no advisories); `ethers` / `viem` are optional

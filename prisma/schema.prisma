@@ -227,6 +227,9 @@ model Invoice {
   brickkenStoId             String?
   brickkenStoEndsAt         DateTime?
   brickkenTokenizationError String?
+  // Set once the STO is closed and its tokens/dividends are settled on-chain
+  // (POST /admin/invoices/:id/finalize-onchain). Null = not yet finalized.
+  brickkenFinalizedAt       DateTime?
   createdAt                 DateTime      @default(now())
   updatedAt                 DateTime      @updatedAt
 
@@ -252,6 +255,10 @@ model Holding {
   acquiredAt  DateTime @default(now())
   // Realized return once the invoice is repaid.
   repaidAmount Decimal @default(0) @db.Decimal(18, 2)
+  // Set when the platform wallet's `newInvest` for this investor's capital did
+  // not confirm on-chain; the funding itself is durable regardless. Cleared on a
+  // later successful newInvest. See docs/RAIQUID_CONTEXT.md.
+  brickkenInvestmentError String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

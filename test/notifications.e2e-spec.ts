@@ -69,7 +69,12 @@ describe('Notifications wired to domain events (e2e)', () => {
           .fn()
           .mockResolvedValue({ stoId: 'sto-test', txHash: null }),
         whitelistInvestorWallet: jest.fn(),
-        closeAndClaim: jest.fn().mockResolvedValue(undefined),
+        invest: jest.fn().mockResolvedValue({ txHash: null }),
+        finalizeOffering: jest.fn().mockResolvedValue({
+          closeTxHash: null,
+          claimTxHash: null,
+          dividendTxHash: null,
+        }),
       })
       .compile();
 

@@ -80,7 +80,12 @@ describe('Buyer + Confirm (e2e)', () => {
         tokenizeInvoice: tokenizeInvoiceMock,
         launchOffering: launchOfferingMock,
         whitelistInvestorWallet: jest.fn(),
-        closeAndClaim: jest.fn().mockResolvedValue(undefined),
+        invest: jest.fn().mockResolvedValue({ txHash: null }),
+        finalizeOffering: jest.fn().mockResolvedValue({
+          closeTxHash: null,
+          claimTxHash: null,
+          dividendTxHash: null,
+        }),
       })
       .compile();
 

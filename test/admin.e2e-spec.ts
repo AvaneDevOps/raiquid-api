@@ -8,6 +8,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { EmailService } from '../src/email/email.service';
 import { BrickkenService } from '../src/brickken/brickken.service';
+import { BrickkenIntegrationError } from '../src/brickken/brickken.errors';
 import { ClerkAuthGuard } from '../src/auth/clerk-auth.guard';
 import type { AuthUser } from '../src/auth/auth-user.type';
 import {
@@ -30,6 +31,25 @@ describe('Admin (e2e)', () => {
   let prisma: PrismaService;
 
   const sendWhitelistDecisionMock = jest.fn().mockResolvedValue(undefined);
+
+  const finalizeOfferingMock = jest.fn(
+    async ({ invoiceId }: { invoiceId: string }) => {
+      for (const action of [
+        OnChainAction.closeOffer,
+        OnChainAction.claimTokens,
+        OnChainAction.dividendDistribution,
+      ]) {
+        await prisma.onChainEvent.create({
+          data: { action, status: OnChainStatus.confirmed, invoiceId },
+        });
+      }
+      return {
+        closeTxHash: '0xclose',
+        claimTxHash: '0xclaim',
+        dividendTxHash: '0xdiv',
+      };
+    },
+  );
 
   let currentUser: AuthUser;
   let adminUser: AuthUser;
@@ -65,7 +85,8 @@ describe('Admin (e2e)', () => {
           .fn()
           .mockResolvedValue({ stoId: 'sto-test', txHash: null }),
         whitelistInvestorWallet: jest.fn(),
-        closeAndClaim: jest.fn().mockResolvedValue(undefined),
+        invest: jest.fn().mockResolvedValue({ txHash: null }),
+        finalizeOffering: finalizeOfferingMock,
       })
       .compile();
 
@@ -538,6 +559,164 @@ describe('Admin (e2e)', () => {
         .post(`/admin/whitelisting/${alreadyWhitelistedId}/decision`)
         .send({ note: 'no approve field' })
         .expect(400);
+    });
+  });
+
+  describe('finalize-onchain', () => {
+    let finBusinessId: string;
+    let finBuyerId: string;
+
+    beforeAll(async () => {
+      const u = await prisma.user.create({
+        data: {
+          clerkUserId: `clerk_fin_biz_${RUN}`,
+          email: `fin-biz-${RUN}@test.example`,
+          role: UserRole.business,
+        },
+      });
+      const biz = await prisma.business.create({
+        data: { userId: u.id, legalName: 'Finalize Co' },
+      });
+      const buyer = await prisma.buyer.create({
+        data: {
+          legalName: 'Finalize Debtor',
+          contactEmail: `fin-buyer-${RUN}@test.example`,
+        },
+      });
+      finBusinessId = biz.id;
+      finBuyerId = buyer.id;
+    });
+
+    beforeEach(() => {
+      finalizeOfferingMock.mockClear();
+    });
+
+    let symbolSeq = 0;
+    const seedLaunched = (o: {
+      n: string;
+      endsAt: Date | null;
+      stoId?: string | null;
+      finalizedAt?: Date | null;
+      fundedAmount?: number;
+    }) => {
+      symbolSeq += 1;
+      return prisma.invoice.create({
+        data: {
+          invoiceNumber: `${o.n}-${RUN}`,
+          businessId: finBusinessId,
+          buyerId: finBuyerId,
+          amount: 100_000,
+          fundedAmount: o.fundedAmount ?? 100_000,
+          status: InvoiceStatus.funded,
+          dueDate: new Date('2027-06-01'),
+          brickkenTokenSymbol: `F${String(symbolSeq).padStart(3, '0')}`,
+          brickkenStoId: o.stoId === undefined ? 'sto-uuid' : o.stoId,
+          brickkenStoEndsAt: o.endsAt,
+          brickkenFinalizedAt: o.finalizedAt ?? null,
+        },
+      });
+    };
+
+    it('403 for a non-admin role', async () => {
+      currentUser = businessUser;
+      await request(httpServer)
+        .post('/admin/invoices/whatever/finalize-onchain')
+        .expect(403);
+    });
+
+    it('404 for an unknown invoice', async () => {
+      currentUser = adminUser;
+      await request(httpServer)
+        .post('/admin/invoices/does-not-exist/finalize-onchain')
+        .expect(404);
+    });
+
+    it('409 when the invoice never launched an offering', async () => {
+      const inv = await seedLaunched({
+        n: 'FIN-NOSTO',
+        endsAt: new Date(Date.now() - 1000),
+        stoId: null,
+      });
+      currentUser = adminUser;
+      await request(httpServer)
+        .post(`/admin/invoices/${inv.id}/finalize-onchain`)
+        .expect(409);
+      expect(finalizeOfferingMock).not.toHaveBeenCalled();
+    });
+
+    it('409 when the STO window has not closed yet', async () => {
+      const inv = await seedLaunched({
+        n: 'FIN-EARLY',
+        endsAt: new Date(Date.now() + 60 * 60 * 1000),
+      });
+      currentUser = adminUser;
+      await request(httpServer)
+        .post(`/admin/invoices/${inv.id}/finalize-onchain`)
+        .expect(409);
+      expect(finalizeOfferingMock).not.toHaveBeenCalled();
+    });
+
+    it('closes, claims and distributes — then rejects a second finalize as 409', async () => {
+      const inv = await seedLaunched({
+        n: 'FIN-OK',
+        endsAt: new Date(Date.now() - 1000),
+        fundedAmount: 90_000,
+      });
+      currentUser = adminUser;
+
+      const res = await request(httpServer)
+        .post(`/admin/invoices/${inv.id}/finalize-onchain`)
+        .expect(201);
+      const body = res.body as {
+        invoice: { brickkenFinalizedAt: string | null };
+        transactions: Record<string, string>;
+      };
+      expect(body.invoice.brickkenFinalizedAt).not.toBeNull();
+      expect(body.transactions.dividendTxHash).toBe('0xdiv');
+
+      expect(finalizeOfferingMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          invoiceId: inv.id,
+          tokenSymbol: inv.brickkenTokenSymbol,
+          dividendAmount: '90000',
+        }),
+      );
+
+      const events = await prisma.onChainEvent.findMany({
+        where: { invoiceId: inv.id },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(events.map((e) => e.action)).toEqual([
+        OnChainAction.closeOffer,
+        OnChainAction.claimTokens,
+        OnChainAction.dividendDistribution,
+      ]);
+
+      await request(httpServer)
+        .post(`/admin/invoices/${inv.id}/finalize-onchain`)
+        .expect(409);
+    });
+
+    it('502 when a Brickken step fails, and the invoice is not marked finalized', async () => {
+      const inv = await seedLaunched({
+        n: 'FIN-BAD',
+        endsAt: new Date(Date.now() - 1000),
+      });
+      finalizeOfferingMock.mockImplementationOnce(() => {
+        const err = new BrickkenIntegrationError('auth', 'claim rejected');
+        err.action = OnChainAction.claimTokens;
+        return Promise.reject(err);
+      });
+      currentUser = adminUser;
+
+      await request(httpServer)
+        .post(`/admin/invoices/${inv.id}/finalize-onchain`)
+        .expect(502);
+
+      const row = await prisma.invoice.findUniqueOrThrow({
+        where: { id: inv.id },
+      });
+      expect(row.brickkenFinalizedAt).toBeNull();
     });
   });
 });

@@ -38,6 +38,15 @@ export class AdminController {
     return this.admin.getLedger(query);
   }
 
+  @Post('invoices/:id/finalize-onchain')
+  @ApiOperation({
+    summary:
+      'Close the STO and settle it on-chain: closeOffer, then claimTokens, then dividendDistribution',
+  })
+  finalizeInvoiceOnChain(@Param('id') id: string) {
+    return this.admin.finalizeInvoiceOnChain(id);
+  }
+
   @Get('whitelisting')
   @ApiOperation({ summary: 'Investor whitelisting review queue' })
   listWhitelistingQueue(@Query() query: PaginationQueryDto) {

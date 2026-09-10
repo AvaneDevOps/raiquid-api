@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Brickken } from 'brickken-sdk';
 import { fromPrivateKey } from 'brickken-sdk/adapters/private-key';
 import type { Env } from '../config/env.validation';
-import { BRICKKEN_CLIENT } from './brickken.tokens';
+import { BRICKKEN_CLIENT, BRICKKEN_SIGNER_ADDRESS } from './brickken.tokens';
 
 export const BrickkenClientProvider: Provider = {
   provide: BRICKKEN_CLIENT,
@@ -16,4 +16,13 @@ export const BrickkenClientProvider: Provider = {
         config.get('BRICKKEN_PRIVATE_KEY', { infer: true }),
       ),
     }),
+};
+
+export const BrickkenSignerAddressProvider: Provider = {
+  provide: BRICKKEN_SIGNER_ADDRESS,
+  inject: [ConfigService],
+  useFactory: (config: ConfigService<Env, true>): Promise<string> =>
+    fromPrivateKey(
+      config.get('BRICKKEN_PRIVATE_KEY', { infer: true }),
+    ).address(),
 };

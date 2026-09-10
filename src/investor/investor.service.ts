@@ -4,11 +4,14 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { BrickkenService } from '../brickken/brickken.service';
+import { BrickkenIntegrationError } from '../brickken/brickken.errors';
 import type { AuthUser } from '../auth/auth-user.type';
 import type { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import {
@@ -19,7 +22,7 @@ import {
   WhitelistStatus,
 } from '../common/enums';
 import { walletBalance } from '../common/wallet-balance';
-import type { Investor } from '../generated/prisma/client';
+import type { Invoice, Investor } from '../generated/prisma/client';
 import type { CreateUploadUrlDto } from './dto/create-upload-url.dto';
 import type { DepositDto } from './dto/deposit.dto';
 import type { FundInvoiceDto } from './dto/fund-invoice.dto';
@@ -33,10 +36,13 @@ const OPEN_FOR_INVESTMENT: InvoiceStatus[] = [
 
 @Injectable()
 export class InvestorService {
+  private readonly logger = new Logger(InvestorService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly notifications: NotificationsService,
+    private readonly brickken: BrickkenService,
   ) {}
 
   async listMarketplace(user: AuthUser, query: PaginationQueryDto) {
@@ -109,7 +115,7 @@ export class InvestorService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const finalInvoice = await this.prisma.$transaction(async (tx) => {
       await tx.holding.upsert({
         where: {
           investorId_invoiceId: {
@@ -180,6 +186,65 @@ export class InvestorService {
 
       return finalInvoice;
     });
+
+    await this.recordOnChainInvestment(invoice, investor.id, dto.amount);
+    return finalInvoice;
+  }
+
+  /**
+   * Mirrors a completed funding to the STO as the platform wallet's `newInvest`.
+   * Runs after the funding transaction has committed: the investor's capital is
+   * real in our ledger regardless of chain state, so a Brickken failure here is
+   * recorded on the Holding (queryable, reconcilable) and never rolls anything
+   * back. See docs/RAIQUID_CONTEXT.md for why the flag lives on Holding.
+   */
+  private async recordOnChainInvestment(
+    invoice: Invoice,
+    investorId: string,
+    amount: number,
+  ): Promise<void> {
+    const where = {
+      investorId_invoiceId: { investorId, invoiceId: invoice.id },
+    };
+
+    if (!invoice.brickkenTokenSymbol) {
+      const message =
+        'invoice has no Brickken token symbol — tokenization never completed on-chain';
+      await this.prisma.holding.update({
+        where,
+        data: { brickkenInvestmentError: message },
+      });
+      this.logger.error(
+        `Holding ${investorId}/${invoice.id} funded but newInvest was skipped: ${message}`,
+      );
+      return;
+    }
+
+    try {
+      await this.brickken.invest({
+        invoiceId: invoice.id,
+        tokenSymbol: invoice.brickkenTokenSymbol,
+        amount: String(amount),
+      });
+      await this.prisma.holding.update({
+        where,
+        data: { brickkenInvestmentError: null },
+      });
+    } catch (err) {
+      const message =
+        err instanceof BrickkenIntegrationError
+          ? `[${err.kind}] ${err.message}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      await this.prisma.holding.update({
+        where,
+        data: { brickkenInvestmentError: message.slice(0, 500) },
+      });
+      this.logger.error(
+        `Holding ${investorId}/${invoice.id} funded but newInvest did not complete: ${message}`,
+      );
+    }
   }
 
   async getPortfolio(user: AuthUser, query: PaginationQueryDto) {
