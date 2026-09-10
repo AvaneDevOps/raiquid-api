@@ -250,7 +250,7 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
           },
         ],
       },
-      { execute: true },
+      { execute: true, signerAddress: SIGNER },
     );
 
     const event = await prisma.onChainEvent.findFirst({
@@ -279,7 +279,7 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
         investorEmail: process.env.BRICKKEN_INVESTOR_EMAIL,
         investmentAmount: '5000',
       }),
-      { execute: true },
+      { execute: true, signerAddress: SIGNER },
     );
 
     const event = await prisma.onChainEvent.findFirst({

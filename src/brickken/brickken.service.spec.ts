@@ -8,6 +8,11 @@ import { OnChainStatus } from '../common/enums';
 
 type EventRow = { id: string; status: string; txHash: string | null };
 
+const SIGNER_ADDRESS = '0x000000000000000000000000000000000000d00d';
+// Every write call is asserted with these options; signerAddress is required by
+// the SDK's client-signed mode.
+const WRITE_OPTS = { execute: true, signerAddress: SIGNER_ADDRESS };
+
 function makeService(bkn: Partial<Brickken>) {
   const events: EventRow[] = [];
   const create = jest.fn(({ data }: { data: Record<string, unknown> }) => {
@@ -47,18 +52,16 @@ function makeService(bkn: Partial<Brickken>) {
       })[key],
   } as unknown as ConfigService;
 
-  const signerAddress = '0x000000000000000000000000000000000000d00d';
-
   return {
     service: new BrickkenService(
       bkn as Brickken,
       prisma,
       config,
-      signerAddress,
+      SIGNER_ADDRESS,
     ),
     create,
     events,
-    signerAddress,
+    signerAddress: SIGNER_ADDRESS,
   };
 }
 
@@ -93,7 +96,7 @@ describe('BrickkenService', () => {
         tokenizerEmail: 'tokenizer@raiquid.test',
         supplyCap: '100000',
       }),
-      { execute: true },
+      WRITE_OPTS,
     );
     expect(create.mock.calls[0][0].data).toEqual(
       expect.objectContaining({
@@ -206,7 +209,7 @@ describe('BrickkenService', () => {
         startDate: String(Date.parse('2027-01-01T00:00:00Z') / 1000),
         endDate: String(Date.parse('2027-01-04T00:00:00Z') / 1000),
       }),
-      { execute: true },
+      WRITE_OPTS,
     );
   });
 
@@ -241,7 +244,7 @@ describe('BrickkenService', () => {
           },
         ],
       },
-      { execute: true },
+      WRITE_OPTS,
     );
     expect(create.mock.calls[0][0].data).toEqual(
       expect.objectContaining({ action: 'whitelist', invoiceId: 'inv-w' }),
@@ -275,7 +278,7 @@ describe('BrickkenService', () => {
         investorAddress: signerAddress,
         investmentAmount: '5000',
       },
-      { execute: true },
+      WRITE_OPTS,
     );
     expect(create.mock.calls[0][0].data).toEqual(
       expect.objectContaining({ action: 'newInvest', invoiceId: 'inv-9' }),
@@ -319,7 +322,7 @@ describe('BrickkenService', () => {
     });
     expect(distributeDividend).toHaveBeenCalledWith(
       { chainId: '84532', tokenSymbol: 'RAAAA', amount: '60000' },
-      { execute: true },
+      WRITE_OPTS,
     );
     expect(close.mock.invocationCallOrder[0]).toBeLessThan(
       claim.mock.invocationCallOrder[0],

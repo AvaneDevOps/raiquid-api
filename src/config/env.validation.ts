@@ -23,11 +23,14 @@ export const envSchema = z
     RESEND_API_KEY: z.string().min(1),
 
     BRICKKEN_API_KEY: z.string().min(1),
+    // 32-byte hex, with or without a 0x prefix — Brickken issues the key with no
+    // prefix, and the SDK's fromPrivateKey accepts either form. Passed through to
+    // fromPrivateKey verbatim in both brickken.provider.ts factories.
     BRICKKEN_PRIVATE_KEY: z
       .string()
       .regex(
-        /^0x[0-9a-fA-F]{64}$/,
-        'must be a 0x-prefixed 32-byte hex string (the platform signing wallet)',
+        /^(0x)?[0-9a-fA-F]{64}$/,
+        'must be a 32-byte hex string (64 hex chars), optionally 0x-prefixed',
       ),
     BRICKKEN_TOKENIZER_EMAIL: z.string().email(),
     // Brickken rejects an STO investment whose investor email matches the token's

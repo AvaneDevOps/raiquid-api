@@ -75,7 +75,8 @@ export class BrickkenService {
     @Inject(BRICKKEN_CLIENT) private readonly bkn: Brickken,
     private readonly prisma: PrismaService,
     config: ConfigService<Env, true>,
-    @Inject(BRICKKEN_SIGNER_ADDRESS) private readonly signerAddress: string,
+    @Inject(BRICKKEN_SIGNER_ADDRESS)
+    private readonly signerAddress: `0x${string}`,
   ) {
     this.chainId = config.get('BRICKKEN_CHAIN_ID', { infer: true });
     this.tokenizerEmail = config.get('BRICKKEN_TOKENIZER_EMAIL', {
@@ -83,6 +84,15 @@ export class BrickkenService {
     });
     this.investorEmail = config.get('BRICKKEN_INVESTOR_EMAIL', { infer: true });
     this.acceptedCoin = config.get('BRICKKEN_ACCEPTED_COIN', { infer: true });
+  }
+
+  /**
+   * Options for every write. `signerAddress` is mandatory in the SDK's
+   * client-signed mode (api-key credentials) — omitting it throws a local
+   * ValidationError before the call is even sent.
+   */
+  private writeOptions(): { execute: true; signerAddress: `0x${string}` } {
+    return { execute: true, signerAddress: this.signerAddress };
   }
 
   async tokenizeInvoice(
@@ -101,7 +111,7 @@ export class BrickkenService {
             tokenType: 'BILL_FACTORING',
             supplyCap: input.supplyCap,
           },
-          { execute: true },
+          this.writeOptions(),
         ),
     );
     return { txHash };
@@ -131,7 +141,7 @@ export class BrickkenService {
               },
             ],
           },
-          { execute: true },
+          this.writeOptions(),
         ),
     );
     return { txHash };
@@ -159,7 +169,7 @@ export class BrickkenService {
             minInvestment: '1',
             maxInvestment: input.raiseAmount,
           },
-          { execute: true },
+          this.writeOptions(),
         ),
     );
 
@@ -187,10 +197,10 @@ export class BrickkenService {
             chainId: this.chainId,
             tokenSymbol: input.tokenSymbol,
             investorEmail: this.investorEmail,
-            investorAddress: this.signerAddress as `0x${string}`,
+            investorAddress: this.signerAddress,
             investmentAmount: input.amount,
           },
-          { execute: true },
+          this.writeOptions(),
         ),
     );
     return { txHash };
@@ -216,7 +226,7 @@ export class BrickkenService {
             tokenSymbol: input.tokenSymbol,
             tokenizerEmail: this.tokenizerEmail,
           },
-          { execute: true },
+          this.writeOptions(),
         ),
     );
     const claim = await this.call(
@@ -228,9 +238,9 @@ export class BrickkenService {
             chainId: this.chainId,
             tokenSymbol: input.tokenSymbol,
             investorEmail: this.investorEmail,
-            investorAddress: this.signerAddress as `0x${string}`,
+            investorAddress: this.signerAddress,
           },
-          { execute: true },
+          this.writeOptions(),
         ),
     );
     const dividend = await this.call(
@@ -243,7 +253,7 @@ export class BrickkenService {
             tokenSymbol: input.tokenSymbol,
             amount: input.dividendAmount,
           },
-          { execute: true },
+          this.writeOptions(),
         ),
     );
     return {

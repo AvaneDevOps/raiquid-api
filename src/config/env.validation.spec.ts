@@ -40,6 +40,14 @@ describe('validateEnv', () => {
     ).toThrow(/BRICKKEN_PRIVATE_KEY/);
   });
 
+  it('accepts a BRICKKEN_PRIVATE_KEY with no 0x prefix (Brickken issues it this way)', () => {
+    const noPrefix = 'abcdef01'.repeat(8);
+    expect(noPrefix).toHaveLength(64);
+    expect(noPrefix).toMatch(/^[0-9a-f]{64}$/);
+    const env = validateEnv({ ...base, BRICKKEN_PRIVATE_KEY: noPrefix });
+    expect(env.BRICKKEN_PRIVATE_KEY).toBe(noPrefix);
+  });
+
   it('rejects a BRICKKEN_INVESTOR_EMAIL equal to BRICKKEN_TOKENIZER_EMAIL', () => {
     expect(() =>
       validateEnv({
