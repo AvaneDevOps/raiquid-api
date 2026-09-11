@@ -251,6 +251,7 @@ describe('BrickkenService against a real DB with a fake SDK client (e2e)', () =>
           {
             investorEmail: process.env.BRICKKEN_INVESTOR_EMAIL,
             investorAddress: SIGNER,
+            whitelistStatus: true,
           },
         ],
       },

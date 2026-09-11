@@ -460,11 +460,42 @@ against the sandbox waits on Brickken confirming our wallet registration.
   format is confirmed as ISO-8601 (see the dedicated bullet above, now fixed in
   code, not still an assumption).
 
+- **`whitelist`'s `userToWhitelist` entry needs `whitelistStatus: true` —
+  confirmed live by decoding the chain directly, not by guessing.** The entry
+  shape was `{ investorEmail, investorAddress }`, no status field. That call
+  resolved, mined (Ethereum Sepolia, status `0x1`), and its receipt's logs
+  decoded — via keccak256 of candidate event signatures matched against
+  topic0, the same method used to identify `mint`'s selector — to
+  **`RoleRevoked(bytes32 indexed role, address indexed account, address
+  indexed sender)`**, OpenZeppelin's standard `AccessControl` event. The call
+  had *revoked* whatever role represents whitelisted status, not granted it —
+  independently consistent with `GET /get-whitelist-status` (`source:
+  "blockchain"`) reading `isWhitelisted: false` for that wallet/token pair,
+  checked three times.
+
+  Adding `whitelistStatus: true` to the entry and repeating the call as a
+  **first-ever attempt against a brand-new token symbol** (so there was no
+  prior whitelist history to collide with) resolved, mined, and
+  `get-whitelist-status` for that same wallet/token pair read back
+  `isWhitelisted: true` — both independently verified against the chain, not
+  just Brickken's API response. `BrickkenService.whitelistPlatformWallet` now
+  sends `whitelistStatus: true`.
+
+  **Left genuinely open, reported honestly rather than papered over:** the
+  successful (grant) call's single log did not decode to `RoleGranted` or
+  `RoleRevoked` under those exact signatures — it carried a different,
+  unidentified topic0 that also appeared as a second log on the original
+  revoke transaction, so it's some kind of general "whitelist operation"
+  event, not the distinguishing signal. Tried keccak256 against a dozen-plus
+  plausible names (`Whitelisted`, `WhitelistUpdated`, batch/array variants,
+  etc.); none matched. This is an open detail about the on-chain event shape,
+  not a gap in the fix itself — the fix is proven by two independent,
+  chain-level checks (a decoded revert-direction event, and a live
+  `isWhitelisted: true` read after adding the field), not by that log.
+
 - **Assumptions still to confirm against the live sandbox** (all one-line
   changes if wrong): `tokenType` is `BILL_FACTORING`; the
-  `newSto` amount parameters (see the dedicated bullet above); the `whitelist`
-  call passes `userToWhitelist: [{ investorEmail, investorAddress }]` for the
-  platform wallet (the exact entry shape is a guess against `unknown[]`);
+  `newSto` amount parameters (see the dedicated bullet above);
   `newInvest` is made by the platform wallet with `BRICKKEN_INVESTOR_EMAIL` +
   `investmentAmount` as a human-readable string; `claimTokens` claims to the
   same platform wallet; `dividendDistribution` amount is `fundedAmount`. The

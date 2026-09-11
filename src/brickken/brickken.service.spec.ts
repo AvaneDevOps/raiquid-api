@@ -235,7 +235,7 @@ describe('BrickkenService', () => {
     );
   });
 
-  it('whitelistPlatformWallet: whitelists the signer under the investor identity for one token', async () => {
+  it('whitelistPlatformWallet: sends whitelistStatus: true, confirmed live to be required', async () => {
     const sdkWhitelist = jest.fn().mockResolvedValue({
       txId: 'tx',
       executionMode: 'client-signed',
@@ -263,6 +263,7 @@ describe('BrickkenService', () => {
           {
             investorEmail: 'investor@raiquid.test',
             investorAddress: signerAddress,
+            whitelistStatus: true,
           },
         ],
       },

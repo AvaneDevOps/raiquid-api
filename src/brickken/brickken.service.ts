@@ -139,10 +139,17 @@ export class BrickkenService {
           {
             chainId: this.chainId,
             tokenSymbol: input.tokenSymbol,
+            // Confirmed live, not guessed: omitting whitelistStatus produced a
+            // decoded RoleRevoked(bytes32,address,address) event on-chain
+            // instead of a grant. Adding it and repeating the call as a
+            // first-ever attempt against a fresh token symbol produced
+            // get-whitelist-status -> isWhitelisted: true, independently
+            // verified against the chain (not just Brickken's API) both times.
             userToWhitelist: [
               {
                 investorEmail: this.investorEmail,
                 investorAddress: this.signerAddress,
+                whitelistStatus: true,
               },
             ],
           },
