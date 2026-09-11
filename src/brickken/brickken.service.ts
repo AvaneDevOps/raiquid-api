@@ -9,8 +9,13 @@ import { BrickkenIntegrationError, mapBrickkenError } from './brickken.errors';
 
 const STO_ID_KEYS = ['stoId', 'offeringId', 'id', 'uuid'] as const;
 
-function toUnixSeconds(date: Date): string {
-  return Math.floor(date.getTime() / 1000).toString();
+// newSto's startDate/endDate must be ISO-8601 strings, not Unix-seconds — a
+// Unix-seconds string reliably threw a server-side "invalid BigNumber string
+// (value=NaN)" on newSto, confirmed by isolating every other variable (chain id
+// format, raise/investment magnitudes, token identity, indexing lag) across six
+// live sandbox attempts. See docs/RAIQUID_CONTEXT.md.
+function toIsoDate(date: Date): string {
+  return date.toISOString();
 }
 
 function findStoId(result: WriteResult): string | null {
@@ -161,8 +166,8 @@ export class BrickkenService {
             tokenSymbol: input.tokenSymbol,
             tokenAmount: input.tokenAmount,
             offeringName: input.offeringName,
-            startDate: toUnixSeconds(input.startDate),
-            endDate: toUnixSeconds(input.endDate),
+            startDate: toIsoDate(input.startDate),
+            endDate: toIsoDate(input.endDate),
             acceptedCoin: this.acceptedCoin,
             minRaiseUSD: input.raiseAmount,
             maxRaiseUSD: input.raiseAmount,

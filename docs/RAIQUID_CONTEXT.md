@@ -300,9 +300,10 @@ against the sandbox waits on Brickken confirming our wallet registration.
   hex signing wallet) are the two credentials; Dapp writes run `client-signed`
   (we sign locally, Brickken broadcasts), so both are needed. Beyond the four
   vars first planned, three more are unavoidable: `BRICKKEN_TOKENIZER_EMAIL`
-  (must match the email tied to the API key) and `BRICKKEN_ACCEPTED_COIN` (the
-  STO payment-token address on-chain), both required by the SDK's
-  `newTokenization` / `newSto` inputs; and `BRICKKEN_INVESTOR_EMAIL`, the
+  (must match the email tied to the API key) and `BRICKKEN_ACCEPTED_COIN` (a
+  payment-token **symbol**, not an address — see the dedicated bullet below),
+  both required by the SDK's `newTokenization` / `newSto` inputs; and
+  `BRICKKEN_INVESTOR_EMAIL`, the
   platform's on-chain investor identity for `newInvest` / `claimTokens` —
   Brickken rejects an investment whose investor email equals the token's
   tokenizer email, so `env.validation.ts` fails at boot if the two match. The
@@ -344,6 +345,34 @@ against the sandbox waits on Brickken confirming our wallet registration.
   `Invoice.brickkenStoEndsAt`. 72h gives the off-chain marketplace time to fund
   the invoice through `POST /investor/marketplace/:id/fund` (each funding fires a
   `newInvest`) before an admin finalizes the offer.
+
+- **`newSto`'s `startDate`/`endDate` must be ISO-8601 strings — confirmed, not
+  inferred, after six live sandbox `newSto` calls.** The code originally sent
+  Unix-seconds strings (`toUnixSeconds`, matching `newTokenization`'s
+  convention). Every live call with that format — the original small-value
+  request and two deliberate variants of it (a real `minRaiseUSD`/`maxRaiseUSD`
+  gap; `minInvestment`/`maxInvestment` equal to the raise) — failed identically:
+  `ApiError` 500, `"invalid BigNumber string (value=NaN
+  ...bignumber/5.8.0)"`. Brickken's own documented example
+  (`docs.brickken.com/api-reference/guides/tokenize-and-run-an-sto.md`) uses
+  ISO-8601-with-milliseconds dates; switching only the date format (small
+  values otherwise unchanged, same tokenized asset, same everything else) made
+  the *identical* small-value request succeed and mine (Ethereum Sepolia block
+  11679814). `BrickkenService` now sends `date.toISOString()`
+  (`toIsoDate`, replacing `toUnixSeconds`) for both fields.
+
+- **Freshly tokenized/launched assets have a real backend indexing lag —
+  matters for testing `invest` and `finalizeOffering` next.** A token that just
+  mined is not immediately usable in a subsequent Brickken call: `get-tokenizer-
+  info` returned `400 "Company ... not found"` for a token symbol minutes after
+  its `newTokenization` tx mined with `status 0x1`, and `newSto` itself returned
+  `400 "Company not found for the provided email and token scope"` for a token
+  symbol seconds after its tx mined. A 90-second wait was enough for the same
+  request, unchanged, to succeed against the same symbol. This is Brickken's
+  backend catching up to the chain, not our code being wrong — but it means any
+  hook that tokenizes/launches and immediately acts on the result (or any live
+  test doing the same) needs to expect this lag, not treat an immediate
+  follow-up 400 as a hard failure.
 
 - **`newSto` amount parameters — one placeholder, the rest are modelling
   assumptions.** `launchOffering` passes `minRaiseUSD` = `maxRaiseUSD` =
@@ -423,11 +452,16 @@ against the sandbox waits on Brickken confirming our wallet registration.
   between the commit and the calls leaves `brickkenStoId` null with *no* error —
   a future reconciliation job keyed on that plus `updatedAt` age can re-drive it.
 
-- **Assumptions to confirm against the live sandbox** (all one-line changes if
-  wrong): STO `startDate` / `endDate` are passed as **Unix-seconds strings**;
-  `newSto`'s STO id is read from `result.info` / `result.raw` under one of
-  `stoId` / `offeringId` / `id` / `uuid` (a successful `newSto` with no id in
-  the response is treated as a failure); `tokenType` is `BILL_FACTORING`; the
+- **Confirmed live (no longer assumptions).** `newSto`'s STO id is a uuid at
+  `result.info.id` — exactly the shallow depth `findStoId()` already checks
+  (`result.info` / `result.raw` / `result.raw.data`, key `id` among others); the
+  deeper nesting flagged earlier (`result.raw.results[].result.info.id`) carries
+  the same value, so no code change was needed there either. `newSto`'s date
+  format is confirmed as ISO-8601 (see the dedicated bullet above, now fixed in
+  code, not still an assumption).
+
+- **Assumptions still to confirm against the live sandbox** (all one-line
+  changes if wrong): `tokenType` is `BILL_FACTORING`; the
   `newSto` amount parameters (see the dedicated bullet above); the `whitelist`
   call passes `userToWhitelist: [{ investorEmail, investorAddress }]` for the
   platform wallet (the exact entry shape is a guess against `unknown[]`);
@@ -445,15 +479,27 @@ against the sandbox waits on Brickken confirming our wallet registration.
   reads index 0 for `txHash` and now persists only `[txHash]` into
   `OnChainEvent.rawPayload.transactionHashes`.
 
-- **`BRICKKEN_ACCEPTED_COIN` — the real sandbox value is known but not yet wired.**
-  A live `get-tokenizer-info` after tokenization returned
-  `paymentTokenAddress: 0x28d2B01854D0aBec267a3DDcad9163580E6E8604` and
-  `escrowAddress: 0x2b7499fAd040dF014957b322e654EB94fBE6f92B` on Ethereum
-  Sepolia. An `eth_call` to that payment-token address decoded as
-  `symbol() = "USDT"`, `name() = "Fake USDT"`, `decimals() = 6` — Brickken's
-  sandbox test USDT. `BRICKKEN_ACCEPTED_COIN` in `.env` is still the
-  `0x…0001` placeholder; swap it for `0x28d2B0…8604` (and use 6 decimals when
-  scaling `newSto` / `newInvest` amounts) once `launchOffering` is probed live.
+- **`BRICKKEN_ACCEPTED_COIN` is a symbol, not an address — confirmed against
+  Brickken's own `newSto` schema, set for real.** Brickken's `newSto.json`
+  schema documents the field verbatim: *"Required. Symbol of the payment token
+  accepted for investments. It must be supported on `chainId`. This method does
+  not accept `paymentTokenSymbol`."* — example `"USDT"`
+  (`docs.brickken.com/api-reference/endpoint/prepare-newSto.md`). This
+  contradicted our own earlier assumption (an on-chain address), which is why
+  it's called out here explicitly rather than left as a bare value. `.env` /
+  `.env.example` now hold the literal string `USDT`. `BrickkenService` passes
+  `BRICKKEN_ACCEPTED_COIN` straight through as `acceptedCoin` in `sto.create` —
+  no parsing, no address handling — so no code change was needed, only the
+  config value and this doc.
+
+  Separately, a live `get-tokenizer-info` after tokenization confirmed what the
+  symbol resolves to on Ethereum Sepolia for our tokenizer:
+  `paymentTokenAddress: 0x28d2B01854D0aBec267a3DDcad9163580E6E8604`
+  (`escrowAddress: 0x2b7499fAd040dF014957b322e654EB94fBE6f92B`), and an
+  `eth_call` decoded that address as `symbol() = "USDT"`, `name() = "Fake USDT"`,
+  `decimals() = 6` — Brickken's sandbox test USDT, self-serve mintable via
+  `mint(address,uint256)` (every other faucet-shaped selector reverts). 1000
+  test USDT was minted to the platform wallet and confirmed via `balanceOf`.
 
 - **`brickken-sdk` audit.** `brickken-sdk@0.2.1` has one runtime dependency,
   `micro-eth-signer` (pure JS, no advisories); `ethers` / `viem` are optional

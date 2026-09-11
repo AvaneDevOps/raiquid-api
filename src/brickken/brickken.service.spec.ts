@@ -202,7 +202,7 @@ describe('BrickkenService', () => {
     ).rejects.toBeInstanceOf(BrickkenIntegrationError);
   });
 
-  it('launchOffering: returns the STO id and passes Unix-seconds dates', async () => {
+  it('launchOffering: returns the STO id and passes ISO-8601 dates', async () => {
     const sdkCreate = jest.fn().mockResolvedValue({
       txId: 'tx',
       executionMode: 'client-signed',
@@ -228,8 +228,8 @@ describe('BrickkenService', () => {
     expect(out.stoId).toBe('sto-123');
     expect(sdkCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        startDate: String(Date.parse('2027-01-01T00:00:00Z') / 1000),
-        endDate: String(Date.parse('2027-01-04T00:00:00Z') / 1000),
+        startDate: '2027-01-01T00:00:00.000Z',
+        endDate: '2027-01-04T00:00:00.000Z',
       }),
       WRITE_OPTS,
     );
