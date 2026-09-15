@@ -28,6 +28,13 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
+      # No dependencies, no install needed — runs before npm ci so an
+      # obfuscated payload can't hide behind a step that never gets reached.
+      # See docs/RAIQUID_CONTEXT.md for the 2026-09-11 incident this exists
+      # because of.
+      - name: Scan for obfuscated payloads
+        run: node scripts/scan-for-obfuscation.mjs
+
       - name: Install dependencies
         run: npm ci
 

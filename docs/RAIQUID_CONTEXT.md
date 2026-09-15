@@ -570,3 +570,59 @@ touch this process — so the parsers the advisories target are never reached.
 Pre-dates the Brickken work; the advisories were published against a version
 range that already covered our transitive `multer`. **Revisit** on the next
 `@nestjs/*` major bump, which is expected to pull `multer >= 2.2.1`.
+
+## Security incident: obfuscated payload on origin/main (2026-09-11)
+
+A commit (`25aa6b4`) landed on `origin/main` — not through this session —
+carrying a legitimate-looking `whitelistStatus: true` fix (a sibling of our
+own `2bf74a1`, same parent, same message) plus, appended to
+`scripts/e2e-db.mjs` after its final `}`, ~1,000 blank spaces (to stay off
+a normal diff view) followed by ~7,500 characters of obfuscated JavaScript
+on one line. Structurally: it leaked `require` / `module` / `__dirname` /
+`__filename` onto `global` under computed property names, reached the
+`Function` constructor indirectly through a function's own properties
+(specifically to avoid ever writing the literal string `"new Function("`),
+and immediately invoked the result — an unconditional, obfuscated loader,
+not gated behind anything.
+
+A full history audit (every commit, every ref — `eval(`/`new Function(`/
+`atob(`/base64 `Buffer.from`/`child_process`/`execSync`/the global-leak and
+DEL-charcode signatures the scanner below encodes precisely/`_0x`-style
+vars/lines over 500 chars/embedded base64/exfil-domain patterns, plus every historical
+`package.json` `scripts` field) found it isolated to that one commit —
+nothing else in this repository's history, before or since, carries any of
+these signatures. `origin/main` was force-pushed back to the clean `2bf74a1`
+and verified, by full hash, to match exactly.
+
+**Blast radius was local-dev-only, confirmed by reading the actual pipeline,
+not assumed:** `scripts/e2e-db.mjs` is referenced only by `pretest:e2e`,
+`test:e2e:db:up`, and `test:e2e:db:down` in `package.json` — not by `build`,
+`start`, `start:prod`, `postinstall`, or `prepare`, and not by the Dockerfile
+(`npm ci` → `npm run build` → `CMD ["node", "dist/main"]`, none of which
+touch it). CI's `Test` step runs `npm test` (unit only), never `test:e2e`.
+So Railway/production was never exposed; the payload could only have
+executed on a developer machine that ran the e2e test scripts against the
+compromised commit.
+
+**Permanent defense added:** `scripts/scan-for-obfuscation.mjs` — no
+dependencies, checks every `git`-tracked file for this exact signature set
+(the global-object leak pattern, the DEL-charcode shuffle-decode stub, the
+indirect-Function-constructor-chain shape — see that file's `RULES` array for
+the literal patterns, deliberately not reproduced here so this page doesn't
+trip its own subject; any single line over ~2000 characters) and exits
+non-zero with the offending
+file/line if anything matches. Wired into `.husky/pre-commit` (runs before
+`lint-staged`, so a re-attempt is blocked locally before it ever reaches
+GitHub) and as its own early step in `.github/workflows/ci.yml`, before
+`npm ci`, so a bypassed hook or a direct push still can't merge to `main`
+silently. Verified against this repo's real, current tree (114 tracked
+files, zero findings) and against the actual `25aa6b4` payload content
+(saved outside the repo for the test, never re-committed): 3 of the 4 rules
+fire on the real sample (`long-line`, `global-assign`,
+`charcode-127-decode`). The 4th, `indirect-function-ctor-chain`, is a
+best-effort heuristic for a same-expression chained-invocation shape and did
+**not** fire on this sample — the real payload splits the bracket access and
+the call across separate statements, which the regex doesn't follow. Noted
+honestly rather than papered over: detection here rests on the other three
+rules, any one of which is sufficient to fail the check, not on that fourth
+one.

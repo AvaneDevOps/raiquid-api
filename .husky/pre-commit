@@ -4,4 +4,10 @@
 # in package.json) runs `eslint --fix` then `prettier --write` on staged *.ts
 # files and re-stages them. If eslint finds an error it cannot auto-fix, it
 # exits non-zero and the commit is aborted.
+#
+# Runs first, before lint-staged: scripts/scan-for-obfuscation.mjs checks
+# every tracked file for the exact obfuscated-payload signatures confirmed in
+# the 2026-09-11 incident (see docs/RAIQUID_CONTEXT.md). No dependencies, no
+# install needed, so it can't be skipped by a broken node_modules.
+node scripts/scan-for-obfuscation.mjs
 npx lint-staged
