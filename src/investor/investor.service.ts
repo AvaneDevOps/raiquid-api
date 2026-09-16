@@ -96,7 +96,11 @@ export class InvestorService {
       );
     }
 
-    const remaining = invoice.amount.sub(invoice.fundedAmount);
+    // Falls back to the full face value when fundingTargetAmount is null —
+    // true for every invoice confirmed before the yield mechanism existed —
+    // so those rows keep funding exactly as they did before.
+    const fundingTarget = invoice.fundingTargetAmount ?? invoice.amount;
+    const remaining = fundingTarget.sub(invoice.fundedAmount);
     if (remaining.lt(dto.amount)) {
       throw new BadRequestException(
         `Amount exceeds the invoice's remaining unfunded balance (${remaining.toString()})`,
@@ -148,12 +152,15 @@ export class InvestorService {
         where: { id: invoice.id },
         data: { fundedAmount: { increment: dto.amount } },
       });
-      const fullyFunded = incremented.fundedAmount.gte(incremented.amount);
+      const fullyFunded = incremented.fundedAmount.gte(
+        incremented.fundingTargetAmount ?? incremented.amount,
+      );
 
       const finalInvoice = await tx.invoice.update({
         where: { id: invoice.id },
         data: {
           status: fullyFunded ? InvoiceStatus.funded : InvoiceStatus.funding,
+          ...(fullyFunded ? { fundedAt: new Date() } : {}),
         },
         include: { buyer: true },
       });

@@ -38,6 +38,7 @@ describe('Investor + fund flow (e2e)', () => {
 
   let investorUser: AuthUser;
   let investorId: string;
+  let fullFlowFundingTarget: number;
   let poorInvestorUser: AuthUser;
   let pendingInvestorUser: AuthUser;
   let pendingInvestorId: string;
@@ -226,7 +227,13 @@ describe('Investor + fund flow (e2e)', () => {
       .post(`/confirm/${confirmToken}/review`)
       .send({ accept: true })
       .expect(201);
-    return id;
+    // The accept flow computes a real (discounted) fundingTargetAmount, so
+    // callers that want to fund "in full" need this, not the face `amount`.
+    const { fundingTargetAmount } = await prisma.invoice.findUniqueOrThrow({
+      where: { id },
+      select: { fundingTargetAmount: true },
+    });
+    return { id, fundingTargetAmount: Number(fundingTargetAmount) };
   }
 
   describe('marketplace browsing (open to any investor)', () => {
@@ -253,15 +260,14 @@ describe('Investor + fund flow (e2e)', () => {
 
   describe('fundInvoice — full flow', () => {
     it('business creates → buyer accepts → investor funds in full → business paid net', async () => {
-      const invoiceId = await createTokenizedInvoice(
-        `INV-FULL-${RUN}`,
-        100_000,
-      );
+      const { id: invoiceId, fundingTargetAmount } =
+        await createTokenizedInvoice(`INV-FULL-${RUN}`, 100_000);
+      fullFlowFundingTarget = fundingTargetAmount;
 
       currentUser = investorUser;
       const res = await request(httpServer)
         .post(`/investor/marketplace/${invoiceId}/fund`)
-        .send({ amount: 100_000 })
+        .send({ amount: fundingTargetAmount })
         .expect(201);
       expect((res.body as { status: string }).status).toBe(
         InvoiceStatus.funded,
@@ -271,14 +277,14 @@ describe('Investor + fund flow (e2e)', () => {
         where: { id: invoiceId },
       });
       expect(invoice.status).toBe(InvoiceStatus.funded);
-      expect(Number(invoice.fundedAmount)).toBe(100_000);
+      expect(Number(invoice.fundedAmount)).toBe(fundingTargetAmount);
 
       const holding = await prisma.holding.findUniqueOrThrow({
         where: {
           investorId_invoiceId: { investorId, invoiceId },
         },
       });
-      expect(Number(holding.amount)).toBe(100_000);
+      expect(Number(holding.amount)).toBe(fundingTargetAmount);
 
       const payout = await prisma.walletTransaction.findFirstOrThrow({
         where: {
@@ -400,7 +406,7 @@ describe('Investor + fund flow (e2e)', () => {
     });
 
     it('mirrors a completed funding to the STO as the platform wallet', async () => {
-      const invoiceId = await createTokenizedInvoice(
+      const { id: invoiceId } = await createTokenizedInvoice(
         `INV-BKN-INV-${RUN}`,
         100_000,
       );
@@ -433,7 +439,7 @@ describe('Investor + fund flow (e2e)', () => {
     });
 
     it('a newInvest failure leaves the funding intact and flags the Holding', async () => {
-      const invoiceId = await createTokenizedInvoice(
+      const { id: invoiceId } = await createTokenizedInvoice(
         `INV-BKN-INV-FAIL-${RUN}`,
         100_000,
       );
@@ -573,15 +579,13 @@ describe('Investor + fund flow (e2e)', () => {
 
   describe('repayment fan-out', () => {
     it('buyer pays a fully-funded invoice → each holder gets principal + the reference', async () => {
-      const invoiceId = await createTokenizedInvoice(
-        `INV-REPAY-${RUN}`,
-        80_000,
-      );
+      const { id: invoiceId, fundingTargetAmount } =
+        await createTokenizedInvoice(`INV-REPAY-${RUN}`, 80_000);
 
       currentUser = repayInvestorUser;
       await request(httpServer)
         .post(`/investor/marketplace/${invoiceId}/fund`)
-        .send({ amount: 80_000 })
+        .send({ amount: fundingTargetAmount })
         .expect(201);
 
       currentUser = buyerUser;
@@ -605,7 +609,11 @@ describe('Investor + fund flow (e2e)', () => {
           investorId_invoiceId: { investorId: repayInvestorId, invoiceId },
         },
       });
-      expect(Number(holding.repaidAmount)).toBe(80_000);
+      // Buyer always pays face value (80_000); the gap over the discounted
+      // fundingTargetAmount is surplus, split 75% investor / 25% platform.
+      const surplus = 80_000 - fundingTargetAmount;
+      const expectedRepaid = fundingTargetAmount + surplus * 0.75;
+      expect(Number(holding.repaidAmount)).toBeCloseTo(expectedRepaid, 6);
 
       const repayment = await prisma.walletTransaction.findFirstOrThrow({
         where: {
@@ -614,7 +622,10 @@ describe('Investor + fund flow (e2e)', () => {
           type: WalletTransactionType.repayment,
         },
       });
-      expect(Number(repayment.amount)).toBe(80_000);
+      // WalletTransaction.amount is principal-only (== fundingTargetAmount
+      // here, since this is the sole holder); repaidAmount on the Holding
+      // is what carries the yield.
+      expect(Number(repayment.amount)).toBe(fundingTargetAmount);
       expect(repayment.description).toBe('BANK-REF-XYZ');
     });
   });
@@ -638,7 +649,10 @@ describe('Investor + fund flow (e2e)', () => {
     it('wallet balance reflects the deposits minus the investments', async () => {
       currentUser = investorUser;
       const res = await request(httpServer).get('/investor/wallet').expect(200);
-      expect((res.body as { balance: number }).balance).toBe(860_000);
+      // 1_000_000 deposited, minus the 40_000 partial fund, minus whatever the
+      // full-flow test actually funded (the real, discounted target).
+      const expectedBalance = 1_000_000 - 40_000 - fullFlowFundingTarget;
+      expect((res.body as { balance: number }).balance).toBe(expectedBalance);
     });
   });
 
@@ -675,10 +689,8 @@ describe('Investor + fund flow (e2e)', () => {
     );
 
     it('a deposit made through the endpoint is then spent by fundInvoice', async () => {
-      const invoiceId = await createTokenizedInvoice(
-        `INV-DEP-FUND-${RUN}`,
-        100_000,
-      );
+      const { id: invoiceId, fundingTargetAmount } =
+        await createTokenizedInvoice(`INV-DEP-FUND-${RUN}`, 100_000);
 
       currentUser = depositInvestorUser;
       await request(httpServer)
@@ -688,13 +700,13 @@ describe('Investor + fund flow (e2e)', () => {
 
       await request(httpServer)
         .post(`/investor/marketplace/${invoiceId}/fund`)
-        .send({ amount: 80_000 })
+        .send({ amount: fundingTargetAmount })
         .expect(201);
 
       const walletRes = await request(httpServer)
         .get('/investor/wallet')
         .expect(200);
-      const expectedBalance = 250_000 + 100_000 - 80_000;
+      const expectedBalance = 250_000 + 100_000 - fundingTargetAmount;
       expect((walletRes.body as { balance: number }).balance).toBe(
         expectedBalance,
       );
@@ -724,7 +736,7 @@ describe('Investor + fund flow (e2e)', () => {
           },
         },
       });
-      expect(Number(holding.amount)).toBe(80_000);
+      expect(Number(holding.amount)).toBe(fundingTargetAmount);
     });
   });
 });

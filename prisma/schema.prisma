@@ -215,6 +215,16 @@ model Invoice {
   platformFeePct            Decimal       @default(0) @db.Decimal(5, 2)
   reserveContributionPct    Decimal       @default(0) @db.Decimal(5, 2)
   fundedAmount              Decimal       @default(0) @db.Decimal(18, 2)
+  // Set once fundedAmount reaches (fundingTargetAmount ?? amount) in
+  // fundInvoice — lets "time to cash" be computed for real later.
+  fundedAt                  DateTime?
+  // Discount-based yield mechanism, computed once at buyer confirmation
+  // (submitConfirmationReview). Null on invoices confirmed before this
+  // existed; fundInvoice falls back to `amount` as the funding cap when
+  // fundingTargetAmount is null, so those rows keep behaving exactly as
+  // before. See docs/RAIQUID_CONTEXT.md.
+  fundingTargetAmount       Decimal?      @db.Decimal(18, 2)
+  investorYieldPct          Decimal?      @db.Decimal(5, 2)
   // Magic-link confirm flow (public GET /confirm/:invoiceId).
   confirmToken              String?       @unique
   confirmedAt               DateTime?

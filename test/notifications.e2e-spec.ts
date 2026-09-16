@@ -164,7 +164,13 @@ describe('Notifications wired to domain events (e2e)', () => {
       .post(`/confirm/${confirmToken}/review`)
       .send({ accept: true })
       .expect(201);
-    return id;
+    // The accept flow computes a real (discounted) fundingTargetAmount, so
+    // callers that want to fund "in full" need this, not the face `amount`.
+    const { fundingTargetAmount } = await prisma.invoice.findUniqueOrThrow({
+      where: { id },
+      select: { fundingTargetAmount: true },
+    });
+    return { id, fundingTargetAmount: Number(fundingTargetAmount) };
   }
 
   function notificationsFor(userId: string) {
@@ -175,7 +181,7 @@ describe('Notifications wired to domain events (e2e)', () => {
   }
 
   it('buyer accepts an invoice → the business owner gets a positive notification', async () => {
-    const invoiceId = await createTokenizedInvoice(
+    const { id: invoiceId } = await createTokenizedInvoice(
       `NOTIF-ACCEPT-${RUN}`,
       60_000,
     );
@@ -221,7 +227,7 @@ describe('Notifications wired to domain events (e2e)', () => {
   });
 
   it('investor fully funds an invoice → the business owner gets a "fully funded" notification', async () => {
-    const invoiceId = await createTokenizedInvoice(
+    const { id: invoiceId, fundingTargetAmount } = await createTokenizedInvoice(
       `NOTIF-FUND-${RUN}`,
       100_000,
     );
@@ -229,7 +235,7 @@ describe('Notifications wired to domain events (e2e)', () => {
     currentUser = investorUser;
     await request(httpServer)
       .post(`/investor/marketplace/${invoiceId}/fund`)
-      .send({ amount: 100_000 })
+      .send({ amount: fundingTargetAmount })
       .expect(201);
 
     const rows = await notificationsFor(businessUserId);
@@ -268,7 +274,7 @@ describe('Notifications wired to domain events (e2e)', () => {
   });
 
   it('buyer repays a funded invoice → each investor holder gets a repayment notification', async () => {
-    const invoiceId = await createTokenizedInvoice(
+    const { id: invoiceId, fundingTargetAmount } = await createTokenizedInvoice(
       `NOTIF-REPAY-${RUN}`,
       80_000,
     );
@@ -276,7 +282,7 @@ describe('Notifications wired to domain events (e2e)', () => {
     currentUser = investorUser;
     await request(httpServer)
       .post(`/investor/marketplace/${invoiceId}/fund`)
-      .send({ amount: 80_000 })
+      .send({ amount: fundingTargetAmount })
       .expect(201);
 
     currentUser = buyerUser;

@@ -12,6 +12,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { BrickkenService } from '../brickken/brickken.service';
 import { BrickkenIntegrationError } from '../brickken/brickken.errors';
 import { brickkenTokenSymbol } from '../brickken/token-symbol';
+import { computeInvoiceYield } from '../business/invoice-yield';
 import type { AuthUser } from '../auth/auth-user.type';
 import {
   InvoiceStatus,
@@ -114,6 +115,17 @@ export class BuyerService {
       );
     }
 
+    // Surplus = the gap between what the buyer pays (full face value, always)
+    // and what was actually raised (fundedAmount, capped at fundingTarget).
+    // 75% of it goes to investors, proportional to each holding's share of
+    // the raise; the remaining 25% is the platform's cut of the surplus —
+    // deliberately not credited anywhere yet (no WalletTransaction, no
+    // ledger), see docs/RAIQUID_CONTEXT.md. For an invoice funded before the
+    // yield mechanism existed, fundedAmount already equals amount, so surplus
+    // is naturally zero and this is principal-only, same as always.
+    const surplus = invoice.amount.sub(invoice.fundedAmount);
+    const investorSurplusShare = surplus.mul(0.75);
+
     return this.prisma.$transaction(async (tx) => {
       const holdings = await tx.holding.findMany({
         where: { invoiceId: invoice.id },
@@ -121,6 +133,10 @@ export class BuyerService {
       });
 
       for (const h of holdings) {
+        const repaidAmount = h.amount.add(
+          h.amount.div(invoice.fundedAmount).mul(investorSurplusShare),
+        );
+
         await tx.walletTransaction.create({
           data: {
             type: WalletTransactionType.repayment,
@@ -132,7 +148,7 @@ export class BuyerService {
         });
         await tx.holding.update({
           where: { id: h.id },
-          data: { repaidAmount: h.amount },
+          data: { repaidAmount },
         });
         await this.notifications.notify(
           {
@@ -170,7 +186,7 @@ export class BuyerService {
   ) {
     const invoice = await this.prisma.invoice.findUnique({
       where: { confirmToken },
-      include: { business: { include: { user: true } } },
+      include: { business: { include: { user: true } }, buyer: true },
     });
     if (!invoice) {
       throw new NotFoundException('Confirmation link is invalid');
@@ -185,10 +201,23 @@ export class BuyerService {
     const noteSuffix = dto.note ? ` Buyer's note: ${dto.note}` : '';
 
     if (dto.accept) {
+      const confirmedAt = new Date();
+      const { fundingTargetAmount, investorYieldPct } = computeInvoiceYield(
+        invoice.amount,
+        invoice.dueDate,
+        confirmedAt,
+        invoice.buyer.provenanceTier,
+      );
+
       const updated = await this.prisma.$transaction(async (tx) => {
         const inv = await tx.invoice.update({
           where: { id: invoice.id },
-          data: { status: InvoiceStatus.tokenized, confirmedAt: new Date() },
+          data: {
+            status: InvoiceStatus.tokenized,
+            confirmedAt,
+            fundingTargetAmount,
+            investorYieldPct,
+          },
         });
         await this.notifications.notify(
           {
