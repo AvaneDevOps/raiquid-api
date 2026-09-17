@@ -10,6 +10,9 @@ import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { BrickkenService } from '../brickken/brickken.service';
 import { BrickkenIntegrationError } from '../brickken/brickken.errors';
+import { retryOnStoIndexingLag } from '../brickken/sto-lag-retry';
+import { buildLaunchOfferingInput } from '../brickken/launch-offering-input';
+import { describeBrickkenError } from '../brickken/describe-error';
 import {
   InvoiceStatus,
   NotificationTone,
@@ -214,6 +217,60 @@ export class AdminService {
         );
       }
       throw err;
+    }
+  }
+
+  /**
+   * Manual fallback for a stuck STO launch: re-attempts just launchOffering
+   * (with the same bounded indexing-lag retry the buyer-accept flow uses),
+   * using the token symbol already persisted from a successful tokenizeInvoice.
+   * Does not touch tokenizeInvoice — if that never succeeded, there is no
+   * token symbol to launch against. See docs/RAIQUID_CONTEXT.md.
+   */
+  async retryStoLaunch(invoiceId: string) {
+    const invoice = await this.prisma.invoice.findUnique({
+      where: { id: invoiceId },
+    });
+    if (!invoice) {
+      throw new NotFoundException('Invoice not found');
+    }
+    if (!invoice.brickkenTokenSymbol) {
+      throw new ConflictException(
+        'Invoice has no Brickken token symbol — tokenization never completed, so there is nothing to launch an STO against',
+      );
+    }
+    if (invoice.brickkenStoId) {
+      throw new ConflictException(
+        'Invoice already has a launched Brickken STO — nothing to retry',
+      );
+    }
+
+    const launchInput = buildLaunchOfferingInput(
+      invoice,
+      invoice.brickkenTokenSymbol,
+    );
+
+    try {
+      const { stoId } = await retryOnStoIndexingLag(() =>
+        this.brickken.launchOffering(launchInput),
+      );
+      return this.prisma.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          brickkenStoId: stoId,
+          brickkenStoEndsAt: launchInput.endDate,
+          brickkenTokenizationError: null,
+        },
+      });
+    } catch (err) {
+      const message = describeBrickkenError(err);
+      await this.prisma.invoice.update({
+        where: { id: invoice.id },
+        data: { brickkenTokenizationError: message.slice(0, 500) },
+      });
+      throw new BadGatewayException(
+        `STO launch retry failed: ${message}. The invoice's brickkenTokenizationError has been updated; it can be retried again.`,
+      );
     }
   }
 

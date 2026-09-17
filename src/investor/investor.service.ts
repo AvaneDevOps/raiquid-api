@@ -214,9 +214,17 @@ export class InvestorService {
       investorId_invoiceId: { investorId, invoiceId: invoice.id },
     };
 
-    if (!invoice.brickkenTokenSymbol) {
-      const message =
-        'invoice has no Brickken token symbol — tokenization never completed on-chain';
+    // brickken.invest() itself only takes tokenSymbol as input — the SDK has
+    // no stoId parameter, it resolves the STO server-side by token. But
+    // investing against a token with no successfully launched STO behind it
+    // is doomed regardless, so the real gate is both fields, not just the
+    // symbol: brickkenStoId is null whenever newSto never completed
+    // (including a tokenization that persisted its symbol but then failed or
+    // is still retrying launchOffering — see docs/RAIQUID_CONTEXT.md).
+    if (!invoice.brickkenTokenSymbol || !invoice.brickkenStoId) {
+      const message = !invoice.brickkenTokenSymbol
+        ? 'invoice has no Brickken token symbol — tokenization never completed on-chain'
+        : 'invoice has a token symbol but no launched Brickken STO — newSto never completed on-chain';
       await this.prisma.holding.update({
         where,
         data: { brickkenInvestmentError: message },

@@ -32,6 +32,10 @@ describe('Admin (e2e)', () => {
 
   const sendWhitelistDecisionMock = jest.fn().mockResolvedValue(undefined);
 
+  const launchOfferingMock = jest
+    .fn()
+    .mockResolvedValue({ stoId: 'sto-test', txHash: null });
+
   const finalizeOfferingMock = jest.fn(
     async ({ invoiceId }: { invoiceId: string }) => {
       for (const action of [
@@ -81,9 +85,7 @@ describe('Admin (e2e)', () => {
       .overrideProvider(BrickkenService)
       .useValue({
         tokenizeInvoice: jest.fn().mockResolvedValue({ txHash: null }),
-        launchOffering: jest
-          .fn()
-          .mockResolvedValue({ stoId: 'sto-test', txHash: null }),
+        launchOffering: launchOfferingMock,
         whitelistPlatformWallet: jest.fn().mockResolvedValue({ txHash: null }),
         invest: jest.fn().mockResolvedValue({ txHash: null }),
         finalizeOffering: finalizeOfferingMock,
@@ -717,6 +719,126 @@ describe('Admin (e2e)', () => {
         where: { id: inv.id },
       });
       expect(row.brickkenFinalizedAt).toBeNull();
+    });
+  });
+
+  describe('retry-sto-launch', () => {
+    let retryBusinessId: string;
+    let retryBuyerId: string;
+
+    beforeAll(async () => {
+      const u = await prisma.user.create({
+        data: {
+          clerkUserId: `clerk_retry_biz_${RUN}`,
+          email: `retry-biz-${RUN}@test.example`,
+          role: UserRole.business,
+        },
+      });
+      const biz = await prisma.business.create({
+        data: { userId: u.id, legalName: 'Retry Co' },
+      });
+      const buyer = await prisma.buyer.create({
+        data: {
+          legalName: 'Retry Debtor',
+          contactEmail: `retry-buyer-${RUN}@test.example`,
+        },
+      });
+      retryBusinessId = biz.id;
+      retryBuyerId = buyer.id;
+    });
+
+    beforeEach(() => {
+      launchOfferingMock.mockClear();
+    });
+
+    const seedStuck = (n: string, tokenSymbol: string | null) =>
+      prisma.invoice.create({
+        data: {
+          invoiceNumber: `${n}-${RUN}`,
+          businessId: retryBusinessId,
+          buyerId: retryBuyerId,
+          amount: 50_000,
+          dueDate: new Date('2027-06-01'),
+          status: InvoiceStatus.tokenized,
+          brickkenTokenSymbol: tokenSymbol,
+          brickkenTokenizationError: '[api] Company not found',
+        },
+      });
+
+    it('404 for an unknown invoice', async () => {
+      currentUser = adminUser;
+      await request(httpServer)
+        .post('/admin/invoices/does-not-exist/retry-sto-launch')
+        .expect(404);
+    });
+
+    it('409 when tokenization never completed (no token symbol to launch against)', async () => {
+      const inv = await seedStuck('RETRY-NOSYM', null);
+      currentUser = adminUser;
+      await request(httpServer)
+        .post(`/admin/invoices/${inv.id}/retry-sto-launch`)
+        .expect(409);
+      expect(launchOfferingMock).not.toHaveBeenCalled();
+    });
+
+    it('409 when the STO is already launched — nothing to retry', async () => {
+      const inv = await prisma.invoice.create({
+        data: {
+          invoiceNumber: `RETRY-ALREADY-${RUN}`,
+          businessId: retryBusinessId,
+          buyerId: retryBuyerId,
+          amount: 50_000,
+          dueDate: new Date('2027-06-01'),
+          status: InvoiceStatus.tokenized,
+          brickkenTokenSymbol: `RTOK-${RUN}`,
+          brickkenStoId: 'sto-already-there',
+        },
+      });
+      currentUser = adminUser;
+      await request(httpServer)
+        .post(`/admin/invoices/${inv.id}/retry-sto-launch`)
+        .expect(409);
+      expect(launchOfferingMock).not.toHaveBeenCalled();
+    });
+
+    it('launches the STO, persists it, and clears the tokenization error', async () => {
+      const symbol = `RETRY-OK-${RUN}`;
+      const inv = await seedStuck('RETRY-OK', symbol);
+      currentUser = adminUser;
+
+      const res = await request(httpServer)
+        .post(`/admin/invoices/${inv.id}/retry-sto-launch`)
+        .expect(201);
+      const body = res.body as {
+        brickkenStoId: string | null;
+        brickkenStoEndsAt: string | null;
+        brickkenTokenizationError: string | null;
+      };
+      expect(body.brickkenStoId).toBe('sto-test');
+      expect(body.brickkenStoEndsAt).not.toBeNull();
+      expect(body.brickkenTokenizationError).toBeNull();
+
+      expect(launchOfferingMock).toHaveBeenCalledWith(
+        expect.objectContaining({ invoiceId: inv.id, tokenSymbol: symbol }),
+      );
+    });
+
+    it('502 when launchOffering fails again, leaving the invoice still unlaunched', async () => {
+      const inv = await seedStuck('RETRY-FAIL', `RETRY-FAIL-${RUN}`);
+      launchOfferingMock.mockRejectedValueOnce(
+        new BrickkenIntegrationError('auth', 'signer not permitted'),
+      );
+      currentUser = adminUser;
+
+      await request(httpServer)
+        .post(`/admin/invoices/${inv.id}/retry-sto-launch`)
+        .expect(502);
+
+      const row = await prisma.invoice.findUniqueOrThrow({
+        where: { id: inv.id },
+      });
+      expect(row.brickkenStoId).toBeNull();
+      expect(row.brickkenTokenizationError).toContain('signer not permitted');
     });
   });
 });

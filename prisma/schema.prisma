@@ -230,9 +230,13 @@ model Invoice {
   confirmedAt               DateTime?
   // Set once, in the same transaction that flips status to `repaid`.
   repaidAt                  DateTime?
-  // Brickken on-chain representation, written after buyer acceptance. A
-  // `tokenized` invoice with a null brickkenStoId and a set
-  // brickkenTokenizationError never made it on-chain — see docs/RAIQUID_CONTEXT.md.
+  // Brickken on-chain representation, written after buyer acceptance.
+  // brickkenTokenSymbol is persisted as soon as tokenizeInvoice succeeds,
+  // independent of what launchOffering does next — so a `tokenized` invoice
+  // with brickkenTokenSymbol set, brickkenStoId still null, and a set
+  // brickkenTokenizationError means tokenization succeeded but the STO
+  // launch (newSto) didn't; brickkenTokenSymbol also null means tokenization
+  // itself never completed. See docs/RAIQUID_CONTEXT.md.
   brickkenTokenSymbol       String?       @unique
   brickkenStoId             String?
   brickkenStoEndsAt         DateTime?

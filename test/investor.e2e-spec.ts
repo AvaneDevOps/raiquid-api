@@ -465,6 +465,44 @@ describe('Investor + fund flow (e2e)', () => {
       expect(holding.brickkenInvestmentError).toContain('rate_limited');
       expect(holding.brickkenInvestmentError).toContain('slow down');
     });
+
+    it('a token symbol with no launched STO (newSto never completed) skips newInvest, not just a missing symbol', async () => {
+      const invoice = await prisma.invoice.create({
+        data: {
+          invoiceNumber: `INV-BKN-NOSTO-${RUN}`,
+          businessId,
+          buyerId,
+          amount: 100_000,
+          dueDate: new Date('2027-06-01'),
+          status: InvoiceStatus.tokenized,
+          platformFeePct: 3,
+          reserveContributionPct: 1,
+          brickkenTokenSymbol: `NOSTO-${RUN}`,
+          brickkenStoId: null,
+        },
+      });
+
+      currentUser = bknInvestorUser;
+      await request(httpServer)
+        .post(`/investor/marketplace/${invoice.id}/fund`)
+        .send({ amount: 25_000 })
+        .expect(201);
+
+      expect(investMock).not.toHaveBeenCalled();
+
+      const holding = await prisma.holding.findUniqueOrThrow({
+        where: {
+          investorId_invoiceId: {
+            investorId: bknInvestorId,
+            invoiceId: invoice.id,
+          },
+        },
+      });
+      expect(Number(holding.amount)).toBe(25_000);
+      expect(holding.brickkenInvestmentError).toContain(
+        'no launched Brickken STO',
+      );
+    });
   });
 
   describe('whitelisting', () => {

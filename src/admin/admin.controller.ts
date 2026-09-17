@@ -47,6 +47,15 @@ export class AdminController {
     return this.admin.finalizeInvoiceOnChain(id);
   }
 
+  @Post('invoices/:id/retry-sto-launch')
+  @ApiOperation({
+    summary:
+      'Manually re-attempt launchOffering (newSto) for an invoice whose tokenization succeeded but STO launch did not',
+  })
+  retryStoLaunch(@Param('id') id: string) {
+    return this.admin.retryStoLaunch(id);
+  }
+
   @Get('whitelisting')
   @ApiOperation({ summary: 'Investor whitelisting review queue' })
   listWhitelistingQueue(@Query() query: PaginationQueryDto) {

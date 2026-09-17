@@ -10,8 +10,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { BrickkenService } from '../brickken/brickken.service';
-import { BrickkenIntegrationError } from '../brickken/brickken.errors';
 import { brickkenTokenSymbol } from '../brickken/token-symbol';
+import { retryOnStoIndexingLag } from '../brickken/sto-lag-retry';
+import { buildLaunchOfferingInput } from '../brickken/launch-offering-input';
+import { describeBrickkenError } from '../brickken/describe-error';
 import { computeInvoiceYield } from '../business/invoice-yield';
 import type { AuthUser } from '../auth/auth-user.type';
 import {
@@ -24,16 +26,6 @@ import type { ListInvoicesQueryDto } from './dto/list-invoices.query.dto';
 import type { PayInvoiceDto } from './dto/pay-invoice.dto';
 import type { ReviewConfirmationDto } from './dto/review-confirmation.dto';
 import type { UpdateBuyerSettingsDto } from './dto/update-buyer-settings.dto';
-
-const STO_START_DELAY_MS = 20 * 60 * 1000;
-const STO_WINDOW_MS = 72 * 60 * 60 * 1000;
-
-function describeBrickkenError(err: unknown): string {
-  if (err instanceof BrickkenIntegrationError) {
-    return `[${err.kind}] ${err.message}`;
-  }
-  return err instanceof Error ? err.message : String(err);
-}
 
 @Injectable()
 export class BuyerService {
@@ -266,8 +258,6 @@ export class BuyerService {
 
   private async tokenizeAndLaunchOffering(invoice: Invoice): Promise<void> {
     const tokenSymbol = brickkenTokenSymbol(invoice.id);
-    const startDate = new Date(Date.now() + STO_START_DELAY_MS);
-    const endDate = new Date(startDate.getTime() + STO_WINDOW_MS);
     const raiseAmount = invoice.amount.toString();
 
     try {
@@ -277,21 +267,45 @@ export class BuyerService {
         name: `Invoice ${invoice.invoiceNumber}`,
         supplyCap: raiseAmount,
       });
-      const { stoId } = await this.brickken.launchOffering({
-        invoiceId: invoice.id,
-        tokenSymbol,
-        offeringName: `Invoice ${invoice.invoiceNumber} financing`,
-        tokenAmount: raiseAmount,
-        raiseAmount,
-        startDate,
-        endDate,
+    } catch (err) {
+      const message = describeBrickkenError(err);
+      await this.prisma.invoice.update({
+        where: { id: invoice.id },
+        data: { brickkenTokenizationError: message.slice(0, 500) },
       });
+      this.logger.error(
+        `Invoice ${invoice.id} accepted but Brickken tokenization did not complete: ${message}`,
+      );
+      return;
+    }
+
+    // Tokenization is real on-chain now — persist the token symbol in its own
+    // write, before launchOffering is even attempted. Previously this was
+    // only written together with brickkenStoId after launchOffering also
+    // succeeded, so a newSto failure silently lost a successful tokenization
+    // too (see docs/RAIQUID_CONTEXT.md).
+    await this.prisma.invoice.update({
+      where: { id: invoice.id },
+      data: { brickkenTokenSymbol: tokenSymbol },
+    });
+
+    try {
+      // newSto commonly fails right after a fresh newTokenization with a
+      // "Company not found" 400 — Brickken's backend hasn't indexed the
+      // just-mined tx yet, not a real failure. Confirmed live: a 90-second
+      // wait was enough for the identical request to succeed. Retries only
+      // this exact error shape, escalating toward ~90s total; anything else
+      // (auth, validation, rate limit) fails immediately as before. See
+      // docs/RAIQUID_CONTEXT.md.
+      const launchInput = buildLaunchOfferingInput(invoice, tokenSymbol);
+      const { stoId } = await retryOnStoIndexingLag(() =>
+        this.brickken.launchOffering(launchInput),
+      );
       await this.prisma.invoice.update({
         where: { id: invoice.id },
         data: {
-          brickkenTokenSymbol: tokenSymbol,
           brickkenStoId: stoId,
-          brickkenStoEndsAt: endDate,
+          brickkenStoEndsAt: launchInput.endDate,
           brickkenTokenizationError: null,
         },
       });
@@ -302,7 +316,7 @@ export class BuyerService {
         data: { brickkenTokenizationError: message.slice(0, 500) },
       });
       this.logger.error(
-        `Invoice ${invoice.id} accepted but Brickken tokenization did not complete: ${message}`,
+        `Invoice ${invoice.id} tokenized (symbol persisted) but STO launch did not complete: ${message}`,
       );
       return;
     }

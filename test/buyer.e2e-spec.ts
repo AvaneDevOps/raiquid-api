@@ -361,6 +361,9 @@ describe('Buyer + Confirm (e2e)', () => {
       const row = await prisma.invoice.findUniqueOrThrow({ where: { id } });
       expect(row.status).toBe(InvoiceStatus.tokenized);
       expect(row.confirmedAt).not.toBeNull();
+      // tokenizeInvoice itself succeeded — its symbol must survive a later
+      // launchOffering failure, not be lost with it.
+      expect(row.brickkenTokenSymbol).toBe(brickkenTokenSymbol(id));
       expect(row.brickkenStoId).toBeNull();
       expect(row.brickkenTokenizationError).toContain('credits_exhausted');
       expect(row.brickkenTokenizationError).toContain('no credits left');
