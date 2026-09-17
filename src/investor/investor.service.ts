@@ -11,7 +11,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { BrickkenService } from '../brickken/brickken.service';
-import { BrickkenIntegrationError } from '../brickken/brickken.errors';
+import { retryOnInvestIndexingLag } from '../brickken/invest-lag-retry';
+import { describeBrickkenError } from '../brickken/describe-error';
 import type { AuthUser } from '../auth/auth-user.type';
 import type { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import {
@@ -236,22 +237,25 @@ export class InvestorService {
     }
 
     try {
-      await this.brickken.invest({
-        invoiceId: invoice.id,
-        tokenSymbol: invoice.brickkenTokenSymbol,
-        amount: String(amount),
-      });
+      // Same discipline as the newSto retry: only a narrow, confirmed-shape
+      // "backend hasn't caught up yet" error is retried (short escalating
+      // waits, since this runs well after the STO already confirmed); a real
+      // rejection — insufficient funds, validation, an actual whitelist
+      // failure — fails fast on the first try and surfaces as-is. See
+      // docs/RAIQUID_CONTEXT.md.
+      await retryOnInvestIndexingLag(() =>
+        this.brickken.invest({
+          invoiceId: invoice.id,
+          tokenSymbol: invoice.brickkenTokenSymbol as string,
+          amount: String(amount),
+        }),
+      );
       await this.prisma.holding.update({
         where,
         data: { brickkenInvestmentError: null },
       });
     } catch (err) {
-      const message =
-        err instanceof BrickkenIntegrationError
-          ? `[${err.kind}] ${err.message}`
-          : err instanceof Error
-            ? err.message
-            : String(err);
+      const message = describeBrickkenError(err);
       await this.prisma.holding.update({
         where,
         data: { brickkenInvestmentError: message.slice(0, 500) },

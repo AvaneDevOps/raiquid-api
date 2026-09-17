@@ -11,6 +11,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { BrickkenService } from '../brickken/brickken.service';
 import { BrickkenIntegrationError } from '../brickken/brickken.errors';
 import { retryOnStoIndexingLag } from '../brickken/sto-lag-retry';
+import { retryOnInvestIndexingLag } from '../brickken/invest-lag-retry';
 import { buildLaunchOfferingInput } from '../brickken/launch-offering-input';
 import { describeBrickkenError } from '../brickken/describe-error';
 import {
@@ -270,6 +271,67 @@ export class AdminService {
       });
       throw new BadGatewayException(
         `STO launch retry failed: ${message}. The invoice's brickkenTokenizationError has been updated; it can be retried again.`,
+      );
+    }
+  }
+
+  /**
+   * Manual fallback for a stuck newInvest: re-attempts just that Holding's
+   * on-chain investment (with the same bounded indexing-lag retry the
+   * funding flow uses). Scoped to a Holding, not an Invoice — a single
+   * invoice can have many investors, each funding independently, each with
+   * their own Holding and their own recordOnChainInvestment call and
+   * brickkenInvestmentError. See docs/RAIQUID_CONTEXT.md.
+   */
+  async retryInvest(holdingId: string) {
+    const holding = await this.prisma.holding.findUnique({
+      where: { id: holdingId },
+      include: { invoice: true },
+    });
+    if (!holding) {
+      throw new NotFoundException('Holding not found');
+    }
+    if (!holding.brickkenInvestmentError) {
+      throw new ConflictException(
+        'This holding has no recorded newInvest failure to retry',
+      );
+    }
+    if (
+      !holding.invoice.brickkenTokenSymbol ||
+      !holding.invoice.brickkenStoId
+    ) {
+      throw new ConflictException(
+        'The invoice has no launched Brickken STO to invest into — retry its STO launch first (POST /admin/invoices/:id/retry-sto-launch)',
+      );
+    }
+
+    try {
+      // Holding.amount is the investor's cumulative funded total for this
+      // invoice, not necessarily just the amount behind the failed attempt —
+      // brickkenInvestmentError is a single coarse flag per Holding, not a
+      // per-funding-round ledger (same limitation recordOnChainInvestment
+      // already has; see docs/RAIQUID_CONTEXT.md). Retrying re-invests the
+      // full current amount, which is correct as long as no earlier funding
+      // round for this same Holding already succeeded on-chain.
+      await retryOnInvestIndexingLag(() =>
+        this.brickken.invest({
+          invoiceId: holding.invoiceId,
+          tokenSymbol: holding.invoice.brickkenTokenSymbol as string,
+          amount: holding.amount.toString(),
+        }),
+      );
+      return this.prisma.holding.update({
+        where: { id: holding.id },
+        data: { brickkenInvestmentError: null },
+      });
+    } catch (err) {
+      const message = describeBrickkenError(err);
+      await this.prisma.holding.update({
+        where: { id: holding.id },
+        data: { brickkenInvestmentError: message.slice(0, 500) },
+      });
+      throw new BadGatewayException(
+        `newInvest retry failed: ${message}. The holding's brickkenInvestmentError has been updated; it can be retried again.`,
       );
     }
   }

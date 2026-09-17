@@ -36,6 +36,8 @@ describe('Admin (e2e)', () => {
     .fn()
     .mockResolvedValue({ stoId: 'sto-test', txHash: null });
 
+  const investMock = jest.fn().mockResolvedValue({ txHash: null });
+
   const finalizeOfferingMock = jest.fn(
     async ({ invoiceId }: { invoiceId: string }) => {
       for (const action of [
@@ -87,7 +89,7 @@ describe('Admin (e2e)', () => {
         tokenizeInvoice: jest.fn().mockResolvedValue({ txHash: null }),
         launchOffering: launchOfferingMock,
         whitelistPlatformWallet: jest.fn().mockResolvedValue({ txHash: null }),
-        invest: jest.fn().mockResolvedValue({ txHash: null }),
+        invest: investMock,
         finalizeOffering: finalizeOfferingMock,
       })
       .compile();
@@ -839,6 +841,154 @@ describe('Admin (e2e)', () => {
       });
       expect(row.brickkenStoId).toBeNull();
       expect(row.brickkenTokenizationError).toContain('signer not permitted');
+    });
+  });
+
+  describe('retry-invest', () => {
+    let riBusinessId: string;
+    let riBuyerId: string;
+    let riInvestorId: string;
+
+    beforeAll(async () => {
+      const bu = await prisma.user.create({
+        data: {
+          clerkUserId: `clerk_ri_biz_${RUN}`,
+          email: `ri-biz-${RUN}@test.example`,
+          role: UserRole.business,
+        },
+      });
+      const biz = await prisma.business.create({
+        data: { userId: bu.id, legalName: 'Retry Invest Co' },
+      });
+      const buyer = await prisma.buyer.create({
+        data: {
+          legalName: 'Retry Invest Debtor',
+          contactEmail: `ri-buyer-${RUN}@test.example`,
+        },
+      });
+      const iu = await prisma.user.create({
+        data: {
+          clerkUserId: `clerk_ri_inv_${RUN}`,
+          email: `ri-inv-${RUN}@test.example`,
+          role: UserRole.investor,
+        },
+      });
+      const investor = await prisma.investor.create({
+        data: {
+          userId: iu.id,
+          displayName: 'Retry Invest Investor',
+          whitelistStatus: WhitelistStatus.whitelisted,
+        },
+      });
+      riBusinessId = biz.id;
+      riBuyerId = buyer.id;
+      riInvestorId = investor.id;
+    });
+
+    beforeEach(() => {
+      investMock.mockClear();
+    });
+
+    const seedInvoiceWithSto = (n: string, stoId: string | null = 'sto-live') =>
+      prisma.invoice.create({
+        data: {
+          invoiceNumber: `${n}-${RUN}`,
+          businessId: riBusinessId,
+          buyerId: riBuyerId,
+          amount: 40_000,
+          fundedAmount: 40_000,
+          dueDate: new Date('2027-06-01'),
+          status: InvoiceStatus.funded,
+          brickkenTokenSymbol: `RI-${n}-${RUN}`,
+          brickkenStoId: stoId,
+        },
+      });
+
+    const seedFailedHolding = (invoiceId: string, amount = 40_000) =>
+      prisma.holding.create({
+        data: {
+          investorId: riInvestorId,
+          invoiceId,
+          amount,
+          tokenUnits: amount,
+          brickkenInvestmentError:
+            '[api] STO not found for the provided token scope',
+        },
+      });
+
+    it('404 for an unknown holding', async () => {
+      currentUser = adminUser;
+      await request(httpServer)
+        .post('/admin/holdings/does-not-exist/retry-invest')
+        .expect(404);
+    });
+
+    it('409 when the holding has no recorded newInvest failure', async () => {
+      const inv = await seedInvoiceWithSto('RI-NOERR');
+      const holding = await prisma.holding.create({
+        data: {
+          investorId: riInvestorId,
+          invoiceId: inv.id,
+          amount: 40_000,
+          tokenUnits: 40_000,
+        },
+      });
+      currentUser = adminUser;
+      await request(httpServer)
+        .post(`/admin/holdings/${holding.id}/retry-invest`)
+        .expect(409);
+      expect(investMock).not.toHaveBeenCalled();
+    });
+
+    it('409 when the invoice has no launched STO to invest into', async () => {
+      const inv = await seedInvoiceWithSto('RI-NOSTO', null);
+      const holding = await seedFailedHolding(inv.id);
+      currentUser = adminUser;
+      await request(httpServer)
+        .post(`/admin/holdings/${holding.id}/retry-invest`)
+        .expect(409);
+      expect(investMock).not.toHaveBeenCalled();
+    });
+
+    it('retries newInvest and clears the error on success', async () => {
+      const inv = await seedInvoiceWithSto('RI-OK');
+      const holding = await seedFailedHolding(inv.id, 12_345);
+      currentUser = adminUser;
+
+      const res = await request(httpServer)
+        .post(`/admin/holdings/${holding.id}/retry-invest`)
+        .expect(201);
+      const body = res.body as { brickkenInvestmentError: string | null };
+      expect(body.brickkenInvestmentError).toBeNull();
+
+      expect(investMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          invoiceId: inv.id,
+          tokenSymbol: inv.brickkenTokenSymbol,
+          amount: '12345',
+        }),
+      );
+    });
+
+    it('502 when newInvest fails again, leaving the error recorded', async () => {
+      const inv = await seedInvoiceWithSto('RI-FAIL');
+      const holding = await seedFailedHolding(inv.id);
+      investMock.mockRejectedValueOnce(
+        new BrickkenIntegrationError(
+          'unauthorized_token_symbol',
+          'wallet not whitelisted',
+        ),
+      );
+      currentUser = adminUser;
+
+      await request(httpServer)
+        .post(`/admin/holdings/${holding.id}/retry-invest`)
+        .expect(502);
+
+      const row = await prisma.holding.findUniqueOrThrow({
+        where: { id: holding.id },
+      });
+      expect(row.brickkenInvestmentError).toContain('wallet not whitelisted');
     });
   });
 });

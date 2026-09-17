@@ -56,6 +56,15 @@ export class AdminController {
     return this.admin.retryStoLaunch(id);
   }
 
+  @Post('holdings/:id/retry-invest')
+  @ApiOperation({
+    summary:
+      "Manually re-attempt newInvest for one Holding whose on-chain investment did not complete (scoped per-holding, not per-invoice — one invoice can have many investors' Holdings)",
+  })
+  retryInvest(@Param('id') id: string) {
+    return this.admin.retryInvest(id);
+  }
+
   @Get('whitelisting')
   @ApiOperation({ summary: 'Investor whitelisting review queue' })
   listWhitelistingQueue(@Query() query: PaginationQueryDto) {
